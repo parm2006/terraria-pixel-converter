@@ -111,55 +111,52 @@ def hue_of(rgb: tuple) -> float:
 
 def detect_pixel_size(img: Image.Image) -> int:
     """
-    Detect logical pixel size using color transition analysis.
-    Samples rows and columns, calculates distances between consecutive color shifts,
-    and returns the most common distance (mode).
+    Detect logical pixel size using chunked color transition analysis.
+    Splits the image into 5 horizontal bands, finds the local transition mode
+    in each, and aggregates them (taking the median) to avoid text/caption pollution.
     """
     import math
     from collections import Counter
     rgb = img.convert("RGB")
     width, height = rgb.size
 
-    distances = []
-    
-    # Sample rows (every 10th row)
-    for y in range(10, height - 10, 10):
-        row_colors = [rgb.getpixel((x, y)) for x in range(width)]
-        transitions = []
-        for x in range(1, width):
-            c1 = row_colors[x-1]
-            c2 = row_colors[x]
-            dist = math.sqrt(sum((a - b)**2 for a, b in zip(c1, c2)))
-            if dist > 20:  # Color change threshold
-                transitions.append(x)
-        for i in range(1, len(transitions)):
-            diff = transitions[i] - transitions[i-1]
-            if 3 <= diff <= 100:  # filter noise and overly large transitions
-                distances.append(diff)
-                
-    # Sample columns (every 10th column)
-    for x in range(10, width - 10, 10):
-        col_colors = [rgb.getpixel((x, y)) for y in range(height)]
-        transitions = []
-        for y in range(1, height):
-            c1 = col_colors[y-1]
-            c2 = col_colors[y]
-            dist = math.sqrt(sum((a - b)**2 for a, b in zip(c1, c2)))
-            if dist > 20:
-                transitions.append(y)
-        for i in range(1, len(transitions)):
-            diff = transitions[i] - transitions[i-1]
-            if 3 <= diff <= 100:
-                distances.append(diff)
-                
-    if not distances:
+    num_chunks = 5
+    chunk_height = height // num_chunks
+    chunk_modes = []
+
+    for i in range(num_chunks):
+        y_start = i * chunk_height
+        y_end = y_start + chunk_height
+        
+        distances = []
+        # Sample rows in this chunk
+        for y in range(y_start + 5, min(height, y_end - 5), 10):
+            row_colors = [rgb.getpixel((x, y)) for x in range(width)]
+            transitions = []
+            for x in range(1, width):
+                c1 = row_colors[x-1]
+                c2 = row_colors[x]
+                dist = math.sqrt(sum((a - b)**2 for a, b in zip(c1, c2)))
+                if dist > 20:  # Color change threshold
+                    transitions.append(x)
+            for j in range(1, len(transitions)):
+                diff = transitions[j] - transitions[j-1]
+                if diff > 5:  # Filter out small noise
+                    distances.append(diff)
+                    
+        if distances:
+            counter = Counter(distances)
+            local_mode = counter.most_common(1)[0][0]
+            chunk_modes.append(local_mode)
+            
+    if not chunk_modes:
         # Fallback to the old logic if no transitions detected
         return max(1, math.ceil(max(width, height) / MAX_LOGICAL_DIM))
         
-    # Pick the most common transition distance
-    counter = Counter(distances)
-    mode, freq = counter.most_common(1)[0]
-    return mode
+    # Aggregate: return the median of the chunk modes
+    chunk_modes.sort()
+    median_mode = chunk_modes[len(chunk_modes) // 2]
+    return median_mode
 
 
 # ---------------------------------------------------------------------------
