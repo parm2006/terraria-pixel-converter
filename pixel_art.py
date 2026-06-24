@@ -355,20 +355,61 @@ def main():
         img = img.crop((0, 0, img.width, max(1, img.height - args.crop_bottom)))
         print(f"Manually cropped bottom: height reduced to {img.height} px")
 
-    # --- Auto-detect and crop bottom caption text (e.g. dark text at the bottom) ---
+    # --- Auto-detect and crop caption text (logical chunk analysis) ---
     if not args.no_auto_crop:
-        img_rgb = img.convert("RGB")
-        w, h = img_rgb.size
-        caption_start_y = None
-        for y in range(h - 1, max(0, h - 200), -1):
-            dark_pixels = sum(1 for x in range(w) if all(c < 100 for c in img_rgb.getpixel((x, y))))
-            # If we find a row with a significant amount of dark text-like pixels
-            if 5 <= dark_pixels <= w * 0.7:
-                caption_start_y = y
-        if caption_start_y is not None:
-            crop_height = max(1, caption_start_y - 15)
-            img = img.crop((0, 0, w, crop_height))
-            print(f"Auto-cropped bottom caption text (height reduced to {img.height} px)")
+        pixel_size = detect_pixel_size(img)
+        w, h = img.size
+        chunk_height = pixel_size
+        num_chunks = h // chunk_height
+        
+        chunk_valid_mins = []
+        for i in range(num_chunks):
+            y_start = i * chunk_height
+            y_end = y_start + chunk_height
+            
+            distances = []
+            # Sample a few rows in this chunk
+            for y in range(y_start + 2, y_end - 2, max(1, chunk_height // 5)):
+                if y >= h: break
+                row_colors = [img.getpixel((x, y)) for x in range(w)]
+                transitions = []
+                for x in range(1, w):
+                    c1 = row_colors[x-1]
+                    c2 = row_colors[x]
+                    dist = math.sqrt(sum((a - b)**2 for a, b in zip(c1, c2)))
+                    if dist > 20:
+                        transitions.append(x)
+                for j in range(1, len(transitions)):
+                    diff = transitions[j] - transitions[j-1]
+                    if diff > 2:  # ignore tiny noise
+                        distances.append(diff)
+                        
+            if distances:
+                chunk_valid_mins.append((i, min(distances)))
+            else:
+                chunk_valid_mins.append((i, None))
+                
+        # Scan from bottom to top for caption crop
+        crop_bottom_y = h
+        for idx in range(num_chunks - 1, -1, -1):
+            m = chunk_valid_mins[idx][1]
+            if m is not None and m < pixel_size * 0.7:
+                crop_bottom_y = idx * chunk_height
+            else:
+                break
+                
+        # Scan from top to bottom for header/title crop
+        crop_top_y = 0
+        for idx in range(num_chunks):
+            m = chunk_valid_mins[idx][1]
+            if m is not None and m < pixel_size * 0.7:
+                crop_top_y = (idx + 1) * chunk_height
+            else:
+                break
+                
+        if crop_top_y > 0 or crop_bottom_y < h:
+            img = img.crop((0, crop_top_y, w, crop_bottom_y))
+            print(f"Auto-cropped borders via sequential chunk analysis: cropped Y range to [{crop_top_y}, {crop_bottom_y}] px")
 
     # --- Strip white/transparent background ---
     # Convert to RGBA so we can check alpha or near-white pixels
