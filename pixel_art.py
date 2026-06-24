@@ -26,6 +26,7 @@ from PIL import Image
 # Enable ANSI escape codes on Windows
 # ---------------------------------------------------------------------------
 if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding='utf-8')
     _kernel32 = ctypes.windll.kernel32
     _handle = _kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
     _mode = ctypes.c_ulong()
@@ -110,14 +111,55 @@ def hue_of(rgb: tuple) -> float:
 
 def detect_pixel_size(img: Image.Image) -> int:
     """
-    Derive logical pixel size from image dimensions.
-    We assume the image contains at most MAX_LOGICAL_DIM logical pixels
-    along its longest axis. Pixel size = ceil(max_dim / MAX_LOGICAL_DIM).
-    A 410x410 image -> ceil(410/150) = 3px per logical pixel.
-    A 64x64 image   -> ceil(64/150)  = 1px per logical pixel.
+    Detect logical pixel size using color transition analysis.
+    Samples rows and columns, calculates distances between consecutive color shifts,
+    and returns the most common distance (mode).
     """
     import math
-    return max(1, math.ceil(max(img.width, img.height) / MAX_LOGICAL_DIM))
+    from collections import Counter
+    rgb = img.convert("RGB")
+    width, height = rgb.size
+
+    distances = []
+    
+    # Sample rows (every 10th row)
+    for y in range(10, height - 10, 10):
+        row_colors = [rgb.getpixel((x, y)) for x in range(width)]
+        transitions = []
+        for x in range(1, width):
+            c1 = row_colors[x-1]
+            c2 = row_colors[x]
+            dist = math.sqrt(sum((a - b)**2 for a, b in zip(c1, c2)))
+            if dist > 20:  # Color change threshold
+                transitions.append(x)
+        for i in range(1, len(transitions)):
+            diff = transitions[i] - transitions[i-1]
+            if 3 <= diff <= 100:  # filter noise and overly large transitions
+                distances.append(diff)
+                
+    # Sample columns (every 10th column)
+    for x in range(10, width - 10, 10):
+        col_colors = [rgb.getpixel((x, y)) for y in range(height)]
+        transitions = []
+        for y in range(1, height):
+            c1 = col_colors[y-1]
+            c2 = col_colors[y]
+            dist = math.sqrt(sum((a - b)**2 for a, b in zip(c1, c2)))
+            if dist > 20:
+                transitions.append(y)
+        for i in range(1, len(transitions)):
+            diff = transitions[i] - transitions[i-1]
+            if 3 <= diff <= 100:
+                distances.append(diff)
+                
+    if not distances:
+        # Fallback to the old logic if no transitions detected
+        return max(1, math.ceil(max(width, height) / MAX_LOGICAL_DIM))
+        
+    # Pick the most common transition distance
+    counter = Counter(distances)
+    mode, freq = counter.most_common(1)[0]
+    return mode
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +307,22 @@ def main():
         "--db-dir", default=".",
         help="Directory containing blocks.json / walls.json (default: current dir)"
     )
+    parser.add_argument(
+        "--pixel-size", type=int, default=0,
+        help="Override automatic pixel size detection (size of 1 block in pixels)."
+    )
+    parser.add_argument(
+        "--bg-threshold", type=int, default=230,
+        help="Color threshold for background stripping (0-255, default 230)."
+    )
+    parser.add_argument(
+        "--crop-bottom", type=int, default=0,
+        help="Manually crop off this many pixels from the bottom of the image before processing."
+    )
+    parser.add_argument(
+        "--no-auto-crop", action="store_true",
+        help="Disable automatic detection and cropping of bottom caption text."
+    )
     args = parser.parse_args()
 
     # --- Load database ---
@@ -292,15 +350,36 @@ def main():
 
     print(f"Image: {img_path.name}  ({img.width} x {img.height} px)")
 
+    # --- Manual bottom crop ---
+    if args.crop_bottom > 0:
+        img = img.crop((0, 0, img.width, max(1, img.height - args.crop_bottom)))
+        print(f"Manually cropped bottom: height reduced to {img.height} px")
+
+    # --- Auto-detect and crop bottom caption text (e.g. dark text at the bottom) ---
+    if not args.no_auto_crop:
+        img_rgb = img.convert("RGB")
+        w, h = img_rgb.size
+        caption_start_y = None
+        for y in range(h - 1, max(0, h - 200), -1):
+            dark_pixels = sum(1 for x in range(w) if all(c < 100 for c in img_rgb.getpixel((x, y))))
+            # If we find a row with a significant amount of dark text-like pixels
+            if 5 <= dark_pixels <= w * 0.7:
+                caption_start_y = y
+        if caption_start_y is not None:
+            crop_height = max(1, caption_start_y - 15)
+            img = img.crop((0, 0, w, crop_height))
+            print(f"Auto-cropped bottom caption text (height reduced to {img.height} px)")
+
     # --- Strip white/transparent background ---
     # Convert to RGBA so we can check alpha or near-white pixels
     rgba = img.convert("RGBA")
     r_data, g_data, b_data, a_data = rgba.split()
-    # Make near-white pixels (all channels >= 240) transparent
+    # Make near-white pixels (all channels >= bg-threshold) transparent
     pixels = list(rgba.getdata())
     new_pixels = []
+    thresh = args.bg_threshold
     for r, g, b, a in pixels:
-        if a < 30 or (r >= 240 and g >= 240 and b >= 240):
+        if a < 30 or (r >= thresh and g >= thresh and b >= thresh):
             new_pixels.append((255, 255, 255, 0))  # transparent
         else:
             new_pixels.append((r, g, b, a))
@@ -325,10 +404,16 @@ def main():
     print(f"Quantized to {NUM_COLORS} colors")
 
     # --- Detect pixel size ---
-    pixel_size = detect_pixel_size(img)
+    if args.pixel_size > 0:
+        pixel_size = args.pixel_size
+        print(f"Using manually specified pixel size: {pixel_size} px")
+    else:
+        pixel_size = detect_pixel_size(img)
+        print(f"Auto-detected pixel size: {pixel_size} px")
+        
     logical_w = img.width  // pixel_size
     logical_h = img.height // pixel_size
-    print(f"Pixel size: {pixel_size} px  →  logical grid: {logical_w} x {logical_h} blocks")
+    print(f"logical grid: {logical_w} x {logical_h} blocks")
 
     # --- Build matcher & process ---
     match_fn = build_matcher(db)
