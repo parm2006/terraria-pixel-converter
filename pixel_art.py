@@ -105,6 +105,42 @@ def hue_of(rgb: tuple) -> float:
     return h * 60
 
 
+def detect_background_color(img: Image.Image, tolerance=15) -> tuple[int, int, int] | None:
+    """
+    Detect the background color of the image by analyzing the four corners.
+    If all corners are similar within the tolerance, returns their average RGB color.
+    Otherwise, returns None (no background color detected).
+    """
+    import math
+    rgba = img.convert("RGBA")
+    width, height = rgba.size
+    
+    corners = [
+        rgba.getpixel((0, 0)),
+        rgba.getpixel((width - 1, 0)),
+        rgba.getpixel((0, height - 1)),
+        rgba.getpixel((width - 1, height - 1))
+    ]
+    
+    # If all corners are transparent (alpha < 30), the background is already transparent
+    if all(c[3] < 30 for c in corners):
+        return None
+        
+    # Check if all corner RGB colors are similar
+    first_rgb = corners[0][:3]
+    for c in corners[1:]:
+        rgb = c[:3]
+        dist = math.sqrt(sum((a - b)**2 for a, b in zip(first_rgb, rgb)))
+        if dist > tolerance:
+            return None  # Corners don't match, don't auto-detect a background color
+            
+    # Return the average color of the corners
+    avg_r = sum(c[0] for c in corners) // 4
+    avg_g = sum(c[1] for c in corners) // 4
+    avg_b = sum(c[2] for c in corners) // 4
+    return (avg_r, avg_g, avg_b)
+
+
 # ---------------------------------------------------------------------------
 # Pixel size detection
 # ---------------------------------------------------------------------------
@@ -309,8 +345,12 @@ def main():
         help="Override automatic pixel size detection (size of 1 block in pixels)."
     )
     parser.add_argument(
-        "--bg-threshold", type=int, default=230,
-        help="Color threshold for background stripping (0-255, default 230)."
+        "--bg-threshold", type=int, default=15,
+        help="Tolerance for matching the background color (default 15)."
+    )
+    parser.add_argument(
+        "--bg-color", type=str, default=None,
+        help="Manually specify background color in Hex (e.g. #F8F8F8) or RGB (e.g. 248,248,248) to bypass corner auto-detection."
     )
     parser.add_argument(
         "--crop-bottom", type=int, default=0,
@@ -411,17 +451,48 @@ def main():
     # --- Strip white/transparent background ---
     # Convert to RGBA so we can check alpha or near-white pixels
     rgba = img.convert("RGBA")
-    r_data, g_data, b_data, a_data = rgba.split()
-    # Make near-white pixels (all channels >= bg-threshold) transparent
-    pixels = list(rgba.getdata())
-    new_pixels = []
-    thresh = args.bg_threshold
-    for r, g, b, a in pixels:
-        if a < 30 or (r >= thresh and g >= thresh and b >= thresh):
-            new_pixels.append((255, 255, 255, 0))  # transparent
-        else:
-            new_pixels.append((r, g, b, a))
-    rgba.putdata(new_pixels)
+    w, h = rgba.size
+    
+    # Resolve background color (manual or auto-detected)
+    bg_color = None
+    if args.bg_color:
+        try:
+            if args.bg_color.startswith("#"):
+                h_str = args.bg_color.lstrip("#")
+                bg_color = tuple(int(h_str[i:i+2], 16) for i in (0, 2, 4))
+            else:
+                bg_color = tuple(map(int, args.bg_color.split(",")))
+            print(f"Using manually specified background color: RGB{bg_color}")
+        except Exception as e:
+            print(f"[WARN] Failed to parse manual bg-color '{args.bg_color}': {e}. Falling back to auto-detection.")
+            
+    if bg_color is None:
+        bg_color = detect_background_color(img, tolerance=15)
+        if bg_color is not None:
+            print(f"Auto-detected background color from corners: RGB{bg_color}")
+            
+    if bg_color is not None:
+        pixels = list(rgba.getdata())
+        new_pixels = []
+        thresh = args.bg_threshold
+        for r, g, b, a in pixels:
+            dist = math.sqrt((r - bg_color[0])**2 + (g - bg_color[1])**2 + (b - bg_color[2])**2)
+            if a < 30 or dist <= thresh:
+                new_pixels.append((255, 255, 255, 0))  # transparent
+            else:
+                new_pixels.append((r, g, b, a))
+        rgba.putdata(new_pixels)
+    else:
+        print("No uniform background color detected. Stripping transparent pixels only.")
+        pixels = list(rgba.getdata())
+        new_pixels = []
+        for r, g, b, a in pixels:
+            if a < 30:
+                new_pixels.append((255, 255, 255, 0))
+            else:
+                new_pixels.append((r, g, b, a))
+        rgba.putdata(new_pixels)
+
     # Crop to non-transparent bounding box
     bbox = rgba.getbbox()
     if bbox:
