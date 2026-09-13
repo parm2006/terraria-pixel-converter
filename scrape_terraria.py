@@ -1,397 +1,336 @@
 #!/usr/bin/env python3
-"""
-scrape_terraria.py
-Refresh the Terraria block and wall color databases from the wiki.
+"""Rebuild complete Terraria block and wall color databases.
+
+TEdit's maintained game metadata is the authoritative catalog. The Terraria
+wiki is used only to obtain an image for a 32x32 color sample. Every catalog
+record is accounted for as accepted, rejected, or errored-with-fallback.
 
 Usage:
-    python scrape_terraria.py --output-dir ./data --replace-cleaned
+    uv run python scrape_terraria.py --output-dir data --replace-cleaned
 """
+
+from __future__ import annotations
 
 import argparse
 import json
 import time
 from io import BytesIO
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote
 
 import requests
-from bs4 import BeautifulSoup
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-WIKI_BASE = "https://terraria.wiki.gg"
-
-BLOCK_SUBPAGES = [
-    "/wiki/Soils",
-    "/wiki/Grown_blocks",
-    "/wiki/Other_found_blocks",
-    "/wiki/Trap_blocks",
-    "/wiki/Ore_blocks",
-    "/wiki/Gemstone_Blocks",
-    "/wiki/Bricks",
-    "/wiki/Crafted_blocks",
-    "/wiki/Purchased_blocks",
-    "/wiki/Looted_blocks",
-    "/wiki/Summoned_blocks",
-]
-
-WALLS_SUBPAGES = [
-    "/wiki/Crafted_walls",
-    "/wiki/Purchased_walls",
-    "/wiki/Naturally_occurring_walls",
-    "/wiki/Converted_walls",
-]
-
-HEADERS = {
-    "User-Agent": "TerrariaPixelArtTool/1.0 (open-source educational project)"
-}
-
-REQUEST_DELAY = 0.25
-COLOR_SAMPLE_SIZE = 32
-
-# ---------------------------------------------------------------------------
-# Manual exclusion list
-# ---------------------------------------------------------------------------
-
-EXCLUDED = {
-    # Liquids
-    "Water", "Lava", "Honey",
-    # Animated
-    "Living Fire Block", "Living Cursed Fire Block", "Living Demon Fire Block",
-    "Living Frostfire Block", "Living Ichor Fire Block", "Living Ultrabright Fire Block",
-    "Lavafall Block", "Waterfall Block", "Honeyfall Block",
-    "Lavafall Wall", "Waterfall Wall", "Honeyfall Wall",
-}
-
-# These are intentionally included. They fall in a live Terraria world, but
-# they are still valid 1x1 tiles and are useful choices for an art palette.
-GRAVITY_BLOCKS = {
-    "Sand Block", "Ebonsand Block", "Crimsand Block", "Pearlsand Block",
-    "Hardened Sand Block", "Hardened Ebonsand Block",
-    "Hardened Crimsand Block", "Hardened Pearlsand Block",
-    "Sandstone Block", "Ebonsandstone Block", "Crimsandstone Block",
-    "Pearlsandstone Block", "Silt Block", "Slush Block",
-}
-
-# ---------------------------------------------------------------------------
-# Items that showed up in scrape but are NOT placeable 1x1 blocks/walls.
-# These are nav links, crafting stations, furniture, ingredients, weapons, etc.
-# ---------------------------------------------------------------------------
-
-NOT_A_BLOCK = {
-    # Wiki nav / section header ghost entries
-    "Blocks", "Bricks", "Walls",
-    # Crafting stations & furniture
-    "Work Bench", "Furnace", "Hellforge", "Heavy Assembler", "Bone Welder",
-    "Sawmill", "Loom", "Living Loom", "Meat Grinder", "Blend-O-Matic",
-    "Solidifier", "Crystal Ball", "Sky Mill", "Sink", "Water fountain",
-    "Bookcase", "Iron Anvil", "Lead Anvil", "Mythril Anvil", "Orichalcum Anvil",
-    "Adamantite Forge", "Titanium Forge", "Ancient Manipulator",
-    # Crafting ingredients / drops (not placeable blocks)
-    "Wire", "Gel", "Pink Gel", "Confetti", "Fallen Star", "Coral",
-    "Cursed Flame", "Ichor", "Spider Fang", "Feather", "Poo",
-    "Mushroom", "Seashell", "Junonia Shell", "Lightning Whelk Shell",
-    "Tulip Shell", "Starfish", "Book",
-    "Hallowed Bar", "Shroomite Bar", "Solar Fragment", "Nebula Fragment",
-    "Stardust Fragment", "Vortex Fragment", "Luminite",
-    "Amethyst", "Diamond", "Emerald", "Ruby", "Sapphire", "Topaz", "Amber",
-    "Crystal Shard", "Forbidden Fragment", "Flinx Fur",
-    "Any Wood", "Any Sand Block", "Any Iron Bar", "Any Seashell or Starfish",
-    # Weapons / tools / accessories that snuck in
-    "Ice Rod", "Sandgun", "Spectre Goggles",
-    # Enemies / bosses
-    "Wall of Flesh", "Antlion", "Ghoulder",
-    # Misc non-block sprites
-    "Torches", "Large Gems", "Gemcorns", "Gem Locks", "Gem Hooks",
-    "Gem Robes", "Phaseblades", "Phasesabers", "Gem staves",
-    "Diamond Minecart", "Gemspark Blocks", "Gemstone Blocks", "Stained Glass",
-    "Large Bamboo", "Pine Wood",
-    "Demon Torch", "Ultrabright Torch",
-    "Snow Balla", "Sand Ball", "Lava Bomb", "Lava Boulder",
-    "Rainbow Boulder", "Poo Boulder", "Spider Boulder", "Bouncy Boulder",
-    "Green Thread", "White Thread", "Purple Thread",
-    # Multi-tile / non-1x1 structural objects
-    "Conveyor Belt (Clockwise)", "Conveyor Belt (Counter Clockwise)",
-    "Dart Trap", "Venom Dart Trap", "Super Dart Trap",
-    "Spear Trap", "Spiky Ball Trap", "Flame Trap",
-}
-
-# The wall pages are already restricted to wall categories. Reusing the block
-# filter here could accidentally throw away a valid wall whose name overlaps
-# with furniture, a crafting item, or another block-page navigation label.
-NOT_A_WALL = {
-    "Blocks", "Bricks", "Walls", "Wall of Flesh",
-}
+TEDIT_TILES_URL = (
+    "https://raw.githubusercontent.com/TEdit/Terraria-Map-Editor/"
+    "main/src/TEdit.Terraria/Data/tiles.json"
+)
+TEDIT_WALLS_URL = (
+    "https://raw.githubusercontent.com/TEdit/Terraria-Map-Editor/"
+    "main/src/TEdit.Terraria/Data/walls.json"
+)
+WIKI_FILE_REDIRECT = "https://terraria.wiki.gg/wiki/Special:Redirect/file/{}"
+USER_AGENT = "TerrariaPixelArtTool/2.0 (open-source educational project)"
+DEFAULT_SAMPLE_SIZE = 32
+DEFAULT_REQUEST_DELAY = 0.08
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def make_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update({"User-Agent": USER_AGENT})
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=0.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    return session
 
-def make_absolute(src: str) -> str:
-    if src.startswith("//"):
-        return "https:" + src
-    if src.startswith("/"):
-        return WIKI_BASE + src
-    return src
+
+def fetch_json(url: str, session: requests.Session) -> list[dict[str, Any]]:
+    response = session.get(url, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise RuntimeError(f"Expected a JSON list from {url}")
+    return payload
 
 
-def average_color(img: Image.Image):
-    rgba = img.convert("RGBA")
-    pixels = list(rgba.getdata())
-    r_sum = g_sum = b_sum = count = 0
-    for r, g, b, a in pixels:
-        if a > 10:
-            r_sum += r
-            g_sum += g
-            b_sum += b
+def average_color(image: Image.Image, sample_size: int) -> tuple[int, int, int] | None:
+    """Average visible pixels in the top-left sample_size square."""
+
+    rgba = image.convert("RGBA")
+    sample = rgba.crop((0, 0, min(rgba.width, sample_size), min(rgba.height, sample_size)))
+    red = green = blue = count = 0
+    for r, g, b, alpha in sample.getdata():
+        if alpha > 10:
+            red += r
+            green += g
+            blue += b
             count += 1
     if count == 0:
         return None
-    return (r_sum // count, g_sum // count, b_sum // count)
+    return red // count, green // count, blue // count
 
 
-def fetch_and_avg(url: str, session: requests.Session):
+def parse_tedit_color(value: Any) -> tuple[int, int, int] | None:
+    if not isinstance(value, str):
+        return None
+    hexadecimal = value.removeprefix("#")
+    if len(hexadecimal) not in {6, 8}:
+        return None
     try:
-        resp = session.get(url, timeout=15)
-        resp.raise_for_status()
-        img = Image.open(BytesIO(resp.content))
-        w = min(img.width, COLOR_SAMPLE_SIZE)
-        h = min(img.height, COLOR_SAMPLE_SIZE)
-        tile = img.crop((0, 0, w, h))
-        return average_color(tile)
-    except Exception as e:
-        print(f"    [WARN] fetch failed for {url}: {e}")
-        return None, str(e)
+        return tuple(int(hexadecimal[index:index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return None
 
 
-# ---------------------------------------------------------------------------
-# Core extraction
-# ---------------------------------------------------------------------------
+def wiki_sprite_url(name: str) -> str:
+    filename = quote(f"{name.replace(' ', '_')}.png", safe="_()'-")
+    return WIKI_FILE_REDIRECT.format(filename)
 
-def extract_items(
-    soup: BeautifulSoup,
-    excluded: set,
-    rejected_names: set,
+
+def fetch_sprite_color(
+    name: str,
     session: requests.Session,
-    source_page: str,
-) -> tuple[list[dict], list[dict]]:
-    entries = []
-    rejected = []
-    seen = set()
-
-    for span in soup.find_all("span", class_="i"):
-        img_tag = span.find("img")
-        if not img_tag:
-            continue
-
-        name = img_tag.get("alt", "").strip()
-        if not name:
-            a = span.find("a")
-            name = a.get_text(strip=True) if a else ""
-        if not name:
-            continue
-
-        src = img_tag.get("src") or img_tag.get("data-src") or ""
-        if not src:
-            rejected.append({
-                "name": name,
-                "sprite_url": "",
-                "reason": "missing_sprite_url",
-                "source_page": source_page,
-            })
-            continue
-        sprite_url = make_absolute(src.split("?")[0])
-
-        if name in seen:
-            continue
-        if name in excluded:
-            print(f"  [SKIP-excluded] {name}")
-            rejected.append({
-                "name": name,
-                "sprite_url": sprite_url,
-                "reason": "excluded_from_palette",
-                "source_page": source_page,
-            })
-            continue
-        if name in rejected_names:
-            print(f"  [SKIP-not-block] {name}")
-            rejected.append({
-                "name": name,
-                "sprite_url": sprite_url,
-                "reason": "not_a_placeable_1x1_material",
-                "source_page": source_page,
-            })
-            continue
-
-        seen.add(name)
-
-        time.sleep(REQUEST_DELAY)
-        result = fetch_and_avg(sprite_url, session)
-        if isinstance(result, tuple):
-            avg, error = result
-        else:
-            avg, error = result, None
-        if avg is None:
-            print(f"  [WARN] {name}: transparent or download failed, skipping.")
-            rejected.append({
-                "name": name,
-                "sprite_url": sprite_url,
-                "reason": "sprite_fetch_or_transparency_failed",
-                "source_page": source_page,
-                "error": error or "no visible pixels in sampled area",
-            })
-            continue
-
-        entries.append({
-            "name": name,
-            "avg_color": list(avg),
-            "sprite_url": sprite_url,
-        })
-        print(f"  [OK] {name:<48}  RGB{avg}")
-
-    return entries, rejected
+    sample_size: int,
+) -> tuple[tuple[int, int, int] | None, str, str | None]:
+    requested_url = wiki_sprite_url(name)
+    try:
+        response = session.get(requested_url, timeout=20)
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "").lower()
+        if "image" not in content_type:
+            return None, response.url, f"not an image ({content_type or 'unknown content type'})"
+        with Image.open(BytesIO(response.content)) as image:
+            color = average_color(image, sample_size)
+        if color is None:
+            return None, response.url, "sample contains no visible pixels"
+        return color, response.url, None
+    except (requests.RequestException, UnidentifiedImageError, OSError) as error:
+        return None, requested_url, str(error)
 
 
-# ---------------------------------------------------------------------------
-# Scrape subpages
-# ---------------------------------------------------------------------------
-
-def scrape_subpages(
-    subpages: list,
-    excluded: set,
-    rejected_names: set,
-    label: str,
-    session: requests.Session,
-) -> tuple[list[dict], list[dict]]:
-    all_entries = []
-    all_rejected = []
-    seen_names = set()
-    seen_rejected = set()
-
-    for path in subpages:
-        url = WIKI_BASE + path
-        print(f"\n  -- {url}")
-        try:
-            resp = session.get(url, timeout=20)
-            resp.raise_for_status()
-        except Exception as e:
-            print(f"  [ERROR] {url}: {e}")
-            continue
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        entries, rejected = extract_items(soup, excluded, rejected_names, session, url)
-
-        for e in entries:
-            if e["name"] not in seen_names:
-                seen_names.add(e["name"])
-                all_entries.append(e)
-        for entry in rejected:
-            key = (entry["name"], entry["reason"])
-            if key not in seen_rejected:
-                seen_rejected.add(key)
-                all_rejected.append(entry)
-
-    print(
-        f"\n  Total unique {label}: {len(all_entries)} "
-        f"({len(all_rejected)} rejected for review)"
+def is_one_by_one(record: dict[str, Any]) -> bool:
+    sizes = record.get("frameSize")
+    if sizes is None:
+        return True
+    if not isinstance(sizes, list):
+        return False
+    return any(
+        isinstance(size, list) and len(size) == 2 and size[0] == 1 and size[1] == 1
+        for size in sizes
     )
-    return all_entries, all_rejected
 
 
-def clean_entries(entries: list[dict]) -> list[dict]:
-    """Produce a stable, valid database from fresh scraped entries."""
+def tile_rejection_reason(record: dict[str, Any]) -> str | None:
+    if not isinstance(record.get("id"), int) or not str(record.get("name", "")).strip():
+        return "missing_id_or_name"
+    if not record.get("isSolid", False):
+        return "not_a_solid_block"
+    if not is_one_by_one(record):
+        return "not_placeable_as_1x1"
+    return None
 
-    cleaned: dict[str, dict] = {}
-    for entry in entries:
-        name = str(entry.get("name", "")).strip()
-        color = entry.get("avg_color")
-        sprite_url = str(entry.get("sprite_url", "")).strip()
-        if not name or not sprite_url or not isinstance(color, list) or len(color) != 3:
+
+def wall_rejection_reason(record: dict[str, Any]) -> str | None:
+    wall_id = record.get("id")
+    name = str(record.get("name", "")).strip()
+    if not isinstance(wall_id, int) or not name:
+        return "missing_id_or_name"
+    if wall_id == 0 or name.casefold() in {"none", "empty", "air"}:
+        return "empty_wall"
+    return None
+
+
+def material_entry(
+    record: dict[str, Any],
+    material_type: str,
+    session: requests.Session,
+    sample_size: int,
+    request_delay: float,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    material_id = record["id"]
+    name = str(record["name"]).strip()
+    fallback = parse_tedit_color(record.get("color"))
+    time.sleep(request_delay)
+    sprite_color, sprite_url, error = fetch_sprite_color(name, session, sample_size)
+
+    color = sprite_color or fallback
+    if color is None:
+        return None, {
+            "id": material_id,
+            "name": name,
+            "material_type": material_type,
+            "reason": "sprite_and_fallback_color_unavailable",
+            "sprite_url": sprite_url,
+            "error": error,
+        }
+
+    entry = {
+        "id": material_id,
+        "name": name,
+        "avg_color": list(color),
+        "sprite_url": sprite_url,
+        "color_source": "wiki_32x32_sample" if sprite_color else "tedit_fallback",
+    }
+    if error is None:
+        return entry, None
+    return entry, {
+        "id": material_id,
+        "name": name,
+        "material_type": material_type,
+        "reason": "wiki_sprite_failed_used_tedit_fallback",
+        "sprite_url": sprite_url,
+        "error": error,
+    }
+
+
+def build_palette(
+    records: list[dict[str, Any]],
+    material_type: str,
+    session: requests.Session,
+    sample_size: int,
+    request_delay: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    reject = tile_rejection_reason if material_type == "block" else wall_rejection_reason
+
+    for index, record in enumerate(records, start=1):
+        reason = reject(record)
+        if reason:
+            rejected.append({
+                "id": record.get("id"),
+                "name": record.get("name"),
+                "reason": reason,
+                "catalog": "TEdit",
+            })
             continue
-        if not all(isinstance(channel, int) and 0 <= channel <= 255 for channel in color):
-            continue
-        cleaned.setdefault(name, {"name": name, "avg_color": color, "sprite_url": sprite_url})
-    return sorted(cleaned.values(), key=lambda entry: entry["name"].casefold())
+
+        entry, error = material_entry(
+            record, material_type, session, sample_size, request_delay
+        )
+        if entry is not None:
+            accepted.append(entry)
+            print(
+                f"  [OK] {entry['name']:<52} ID {entry['id']:<4} "
+                f"RGB{tuple(entry['avg_color'])} ({entry['color_source']})"
+            )
+        else:
+            rejected.append({
+                "id": record.get("id"),
+                "name": record.get("name"),
+                "reason": "no_usable_color",
+                "catalog": "TEdit",
+            })
+        if error is not None:
+            errors.append(error)
+            print(f"  [FALLBACK] {error['name']}: {error['error']}")
+        if index % 100 == 0:
+            print(f"  Processed {index}/{len(records)} {material_type} catalog records")
+
+    accepted.sort(key=lambda item: item["id"])
+    rejected.sort(key=lambda item: (item.get("id") is None, item.get("id") or -1))
+    errors.sort(key=lambda item: (item.get("id") is None, item.get("id") or -1))
+    return accepted, rejected, errors
 
 
-def validate_refresh(blocks: list[dict], walls: list[dict]) -> None:
-    """Reject an incomplete scrape before it can replace the live palette."""
+def write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as file:
+        json.dump(payload, file, indent=2, ensure_ascii=False)
+        file.write("\n")
+    temporary.replace(path)
 
+
+def validate_refresh(
+    source_tiles: list[dict[str, Any]],
+    source_walls: list[dict[str, Any]],
+    blocks: list[dict[str, Any]],
+    walls: list[dict[str, Any]],
+    rejected_blocks: list[dict[str, Any]],
+    rejected_walls: list[dict[str, Any]],
+) -> None:
     block_names = {entry["name"] for entry in blocks}
     missing = {"Dirt Block", "Stone Block", "Sand Block"} - block_names
     if missing:
-        raise RuntimeError(f"Refusing to replace data: missing required blocks: {sorted(missing)}")
-    if len(blocks) < 100 or len(walls) < 100:
-        raise RuntimeError(
-            f"Refusing to replace data: scrape is unexpectedly small "
-            f"({len(blocks)} blocks, {len(walls)} walls)."
-        )
+        raise RuntimeError(f"Missing required blocks: {sorted(missing)}")
+    if len(blocks) < 200 or len(walls) < 200:
+        raise RuntimeError(f"Unexpectedly small palette: {len(blocks)} blocks, {len(walls)} walls")
+    if len(blocks) + len(rejected_blocks) != len(source_tiles):
+        raise RuntimeError("Some TEdit tile records were not accounted for")
+    if len(walls) + len(rejected_walls) != len(source_walls):
+        raise RuntimeError("Some TEdit wall records were not accounted for")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Scrape terraria.wiki.gg once to build the block/wall color database."
-    )
-    parser.add_argument("--output-dir", default=".", help="Where to write blocks.json and walls.json")
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, default=Path("data"))
+    parser.add_argument("--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE)
+    parser.add_argument("--request-delay", type=float, default=DEFAULT_REQUEST_DELAY)
     parser.add_argument(
         "--replace-cleaned",
         action="store_true",
-        help="After validation, replace cleaned_blocks.json and cleaned_walls.json",
+        help="Replace cleaned_blocks.json and cleaned_walls.json after validation",
     )
     args = parser.parse_args()
+    if args.sample_size < 1:
+        parser.error("--sample-size must be at least 1")
+    if args.request_delay < 0:
+        parser.error("--request-delay cannot be negative")
 
-    out_dir = Path(args.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    session = make_session()
+    print("Downloading authoritative TEdit tile and wall catalogs...")
+    source_tiles = fetch_json(TEDIT_TILES_URL, session)
+    source_walls = fetch_json(TEDIT_WALLS_URL, session)
+    write_json(args.output_dir / "raw_blocks.json", source_tiles)
+    write_json(args.output_dir / "raw_walls.json", source_walls)
 
-    session = requests.Session()
-    session.headers.update(HEADERS)
-
-    print("=== Scraping BLOCKS ===")
-    blocks, rejected_blocks = scrape_subpages(
-        BLOCK_SUBPAGES, EXCLUDED, NOT_A_BLOCK, "blocks", session
+    print(f"Building block palette from {len(source_tiles)} tile definitions...")
+    blocks, rejected_blocks, block_errors = build_palette(
+        source_tiles, "block", session, args.sample_size, args.request_delay
     )
-    blocks_path = out_dir / "raw_blocks.json"
-    with open(blocks_path, "w") as f:
-        json.dump(blocks, f, indent=2)
-    print(f"Saved {len(blocks)} blocks -> {blocks_path}")
-
-    print("\n=== Scraping WALLS ===")
-    walls, rejected_walls = scrape_subpages(
-        WALLS_SUBPAGES, EXCLUDED, NOT_A_WALL, "walls", session
+    print(f"Building wall palette from {len(source_walls)} wall definitions...")
+    walls, rejected_walls, wall_errors = build_palette(
+        source_walls, "wall", session, args.sample_size, args.request_delay
     )
-    walls_path = out_dir / "raw_walls.json"
-    with open(walls_path, "w") as f:
-        json.dump(walls, f, indent=2)
-    print(f"Saved {len(walls)} walls -> {walls_path}")
 
-    rejected_dir = out_dir / "rejected"
-    rejected_dir.mkdir(parents=True, exist_ok=True)
-    for name, entries in (("blocks.json", rejected_blocks), ("walls.json", rejected_walls)):
-        path = rejected_dir / name
-        with path.open("w", encoding="utf-8") as file:
-            json.dump(entries, file, indent=2)
-            file.write("\n")
-        print(f"Saved {len(entries)} rejected {name.removesuffix('.json')} -> {path}")
+    validate_refresh(
+        source_tiles,
+        source_walls,
+        blocks,
+        walls,
+        rejected_blocks,
+        rejected_walls,
+    )
+    write_json(args.output_dir / "rejected" / "blocks.json", rejected_blocks)
+    write_json(args.output_dir / "rejected" / "walls.json", rejected_walls)
+    write_json(args.output_dir / "errors" / "blocks.json", block_errors)
+    write_json(args.output_dir / "errors" / "walls.json", wall_errors)
 
     if args.replace_cleaned:
-        cleaned_blocks = clean_entries(blocks)
-        cleaned_walls = clean_entries(walls)
-        validate_refresh(cleaned_blocks, cleaned_walls)
-        for name, entries in (("cleaned_blocks.json", cleaned_blocks), ("cleaned_walls.json", cleaned_walls)):
-            path = out_dir / name
-            with path.open("w", encoding="utf-8") as file:
-                json.dump(entries, file, indent=2)
-                file.write("\n")
-            print(f"Replaced {path} with {len(entries)} validated entries")
+        write_json(args.output_dir / "cleaned_blocks.json", blocks)
+        write_json(args.output_dir / "cleaned_walls.json", walls)
+    else:
+        write_json(args.output_dir / "refreshed_blocks.json", blocks)
+        write_json(args.output_dir / "refreshed_walls.json", walls)
 
-    print("\nDone.")
+    print("\nRefresh complete")
+    print(f"  Blocks accepted: {len(blocks)}")
+    print(f"  Walls accepted: {len(walls)}")
+    print(f"  Tiles rejected by metadata: {len(rejected_blocks)}")
+    print(f"  Walls rejected by metadata: {len(rejected_walls)}")
+    print(f"  Block sprite fallbacks/errors: {len(block_errors)}")
+    print(f"  Wall sprite fallbacks/errors: {len(wall_errors)}")
 
 
 if __name__ == "__main__":
