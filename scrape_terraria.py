@@ -49,6 +49,7 @@ HEADERS = {
 }
 
 REQUEST_DELAY = 0.25
+COLOR_SAMPLE_SIZE = 32
 
 # ---------------------------------------------------------------------------
 # Manual exclusion list
@@ -117,6 +118,13 @@ NOT_A_BLOCK = {
     "Spear Trap", "Spiky Ball Trap", "Flame Trap",
 }
 
+# The wall pages are already restricted to wall categories. Reusing the block
+# filter here could accidentally throw away a valid wall whose name overlaps
+# with furniture, a crafting item, or another block-page navigation label.
+NOT_A_WALL = {
+    "Blocks", "Bricks", "Walls", "Wall of Flesh",
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -150,8 +158,8 @@ def fetch_and_avg(url: str, session: requests.Session):
         resp = session.get(url, timeout=15)
         resp.raise_for_status()
         img = Image.open(BytesIO(resp.content))
-        w = min(img.width, 16)
-        h = min(img.height, 16)
+        w = min(img.width, COLOR_SAMPLE_SIZE)
+        h = min(img.height, COLOR_SAMPLE_SIZE)
         tile = img.crop((0, 0, w, h))
         return average_color(tile)
     except Exception as e:
@@ -163,8 +171,15 @@ def fetch_and_avg(url: str, session: requests.Session):
 # Core extraction
 # ---------------------------------------------------------------------------
 
-def extract_items(soup: BeautifulSoup, excluded: set, not_a_block: set, session: requests.Session) -> list:
+def extract_items(
+    soup: BeautifulSoup,
+    excluded: set,
+    rejected_names: set,
+    session: requests.Session,
+    source_page: str,
+) -> tuple[list[dict], list[dict]]:
     entries = []
+    rejected = []
     seen = set()
 
     for span in soup.find_all("span", class_="i"):
@@ -188,9 +203,21 @@ def extract_items(soup: BeautifulSoup, excluded: set, not_a_block: set, session:
             continue
         if name in excluded:
             print(f"  [SKIP-excluded] {name}")
+            rejected.append({
+                "name": name,
+                "sprite_url": sprite_url,
+                "reason": "excluded_from_palette",
+                "source_page": source_page,
+            })
             continue
-        if name in not_a_block:
+        if name in rejected_names:
             print(f"  [SKIP-not-block] {name}")
+            rejected.append({
+                "name": name,
+                "sprite_url": sprite_url,
+                "reason": "not_a_placeable_1x1_material",
+                "source_page": source_page,
+            })
             continue
 
         seen.add(name)
@@ -208,16 +235,24 @@ def extract_items(soup: BeautifulSoup, excluded: set, not_a_block: set, session:
         })
         print(f"  [OK] {name:<48}  RGB{avg}")
 
-    return entries
+    return entries, rejected
 
 
 # ---------------------------------------------------------------------------
 # Scrape subpages
 # ---------------------------------------------------------------------------
 
-def scrape_subpages(subpages: list, excluded: set, not_a_block: set, label: str, session: requests.Session) -> list:
+def scrape_subpages(
+    subpages: list,
+    excluded: set,
+    rejected_names: set,
+    label: str,
+    session: requests.Session,
+) -> tuple[list[dict], list[dict]]:
     all_entries = []
+    all_rejected = []
     seen_names = set()
+    seen_rejected = set()
 
     for path in subpages:
         url = WIKI_BASE + path
@@ -230,15 +265,23 @@ def scrape_subpages(subpages: list, excluded: set, not_a_block: set, label: str,
             continue
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        entries = extract_items(soup, excluded, not_a_block, session)
+        entries, rejected = extract_items(soup, excluded, rejected_names, session, url)
 
         for e in entries:
             if e["name"] not in seen_names:
                 seen_names.add(e["name"])
                 all_entries.append(e)
+        for entry in rejected:
+            key = (entry["name"], entry["reason"])
+            if key not in seen_rejected:
+                seen_rejected.add(key)
+                all_rejected.append(entry)
 
-    print(f"\n  Total unique {label}: {len(all_entries)}")
-    return all_entries
+    print(
+        f"\n  Total unique {label}: {len(all_entries)} "
+        f"({len(all_rejected)} rejected for review)"
+    )
+    return all_entries, all_rejected
 
 
 def clean_entries(entries: list[dict]) -> list[dict]:
@@ -294,18 +337,31 @@ def main():
     session.headers.update(HEADERS)
 
     print("=== Scraping BLOCKS ===")
-    blocks = scrape_subpages(BLOCK_SUBPAGES, EXCLUDED, NOT_A_BLOCK, "blocks", session)
+    blocks, rejected_blocks = scrape_subpages(
+        BLOCK_SUBPAGES, EXCLUDED, NOT_A_BLOCK, "blocks", session
+    )
     blocks_path = out_dir / "raw_blocks.json"
     with open(blocks_path, "w") as f:
         json.dump(blocks, f, indent=2)
     print(f"Saved {len(blocks)} blocks -> {blocks_path}")
 
     print("\n=== Scraping WALLS ===")
-    walls = scrape_subpages(WALLS_SUBPAGES, EXCLUDED, NOT_A_BLOCK, "walls", session)
+    walls, rejected_walls = scrape_subpages(
+        WALLS_SUBPAGES, EXCLUDED, NOT_A_WALL, "walls", session
+    )
     walls_path = out_dir / "raw_walls.json"
     with open(walls_path, "w") as f:
         json.dump(walls, f, indent=2)
     print(f"Saved {len(walls)} walls -> {walls_path}")
+
+    rejected_dir = out_dir / "rejected"
+    rejected_dir.mkdir(parents=True, exist_ok=True)
+    for name, entries in (("blocks.json", rejected_blocks), ("walls.json", rejected_walls)):
+        path = rejected_dir / name
+        with path.open("w", encoding="utf-8") as file:
+            json.dump(entries, file, indent=2)
+            file.write("\n")
+        print(f"Saved {len(entries)} rejected {name.removesuffix('.json')} -> {path}")
 
     if args.replace_cleaned:
         cleaned_blocks = clean_entries(blocks)
