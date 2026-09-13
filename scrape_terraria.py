@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 scrape_terraria.py
-Run ONCE to build blocks.json and walls.json.
+Refresh the Terraria block and wall color databases from the wiki.
 
 Usage:
-    python scrape_terraria.py
-    python scrape_terraria.py --output-dir ./data
+    python scrape_terraria.py --output-dir ./data --replace-cleaned
 """
 
 import argparse
@@ -56,11 +55,6 @@ REQUEST_DELAY = 0.25
 # ---------------------------------------------------------------------------
 
 EXCLUDED = {
-    # Gravity blocks
-    "Sand Block", "Ebonsand Block", "Crimsand Block", "Pearlsand Block",
-    "Hardened Sand", "Hardened Ebonsand", "Hardened Crimsand", "Hardened Pearlsand",
-    "Sandstone Block", "Ebonsandstone Block", "Crimsandstone Block", "Pearlsandstone Block",
-    "Silt Block", "Slush Block",
     # Liquids
     "Water", "Lava", "Honey",
     # Animated
@@ -68,6 +62,16 @@ EXCLUDED = {
     "Living Frostfire Block", "Living Ichor Fire Block", "Living Ultrabright Fire Block",
     "Lavafall Block", "Waterfall Block", "Honeyfall Block",
     "Lavafall Wall", "Waterfall Wall", "Honeyfall Wall",
+}
+
+# These are intentionally included. They fall in a live Terraria world, but
+# they are still valid 1x1 tiles and are useful choices for an art palette.
+GRAVITY_BLOCKS = {
+    "Sand Block", "Ebonsand Block", "Crimsand Block", "Pearlsand Block",
+    "Hardened Sand Block", "Hardened Ebonsand Block",
+    "Hardened Crimsand Block", "Hardened Pearlsand Block",
+    "Sandstone Block", "Ebonsandstone Block", "Crimsandstone Block",
+    "Pearlsandstone Block", "Silt Block", "Slush Block",
 }
 
 # ---------------------------------------------------------------------------
@@ -237,6 +241,36 @@ def scrape_subpages(subpages: list, excluded: set, not_a_block: set, label: str,
     return all_entries
 
 
+def clean_entries(entries: list[dict]) -> list[dict]:
+    """Produce a stable, valid database from fresh scraped entries."""
+
+    cleaned: dict[str, dict] = {}
+    for entry in entries:
+        name = str(entry.get("name", "")).strip()
+        color = entry.get("avg_color")
+        sprite_url = str(entry.get("sprite_url", "")).strip()
+        if not name or not sprite_url or not isinstance(color, list) or len(color) != 3:
+            continue
+        if not all(isinstance(channel, int) and 0 <= channel <= 255 for channel in color):
+            continue
+        cleaned.setdefault(name, {"name": name, "avg_color": color, "sprite_url": sprite_url})
+    return sorted(cleaned.values(), key=lambda entry: entry["name"].casefold())
+
+
+def validate_refresh(blocks: list[dict], walls: list[dict]) -> None:
+    """Reject an incomplete scrape before it can replace the live palette."""
+
+    block_names = {entry["name"] for entry in blocks}
+    missing = {"Dirt Block", "Stone Block", "Sand Block"} - block_names
+    if missing:
+        raise RuntimeError(f"Refusing to replace data: missing required blocks: {sorted(missing)}")
+    if len(blocks) < 100 or len(walls) < 100:
+        raise RuntimeError(
+            f"Refusing to replace data: scrape is unexpectedly small "
+            f"({len(blocks)} blocks, {len(walls)} walls)."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -246,6 +280,11 @@ def main():
         description="Scrape terraria.wiki.gg once to build the block/wall color database."
     )
     parser.add_argument("--output-dir", default=".", help="Where to write blocks.json and walls.json")
+    parser.add_argument(
+        "--replace-cleaned",
+        action="store_true",
+        help="After validation, replace cleaned_blocks.json and cleaned_walls.json",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -259,16 +298,27 @@ def main():
     blocks_path = out_dir / "raw_blocks.json"
     with open(blocks_path, "w") as f:
         json.dump(blocks, f, indent=2)
-    print(f"Saved {len(blocks)} blocks -> {blocks_path}\n  Clean this file and save as cleaned_blocks.json before using pixel_art.py")
+    print(f"Saved {len(blocks)} blocks -> {blocks_path}")
 
     print("\n=== Scraping WALLS ===")
     walls = scrape_subpages(WALLS_SUBPAGES, EXCLUDED, NOT_A_BLOCK, "walls", session)
     walls_path = out_dir / "raw_walls.json"
     with open(walls_path, "w") as f:
         json.dump(walls, f, indent=2)
-    print(f"Saved {len(walls)} walls -> {walls_path}\n  Clean this file and save as cleaned_walls.json before using pixel_art.py")
+    print(f"Saved {len(walls)} walls -> {walls_path}")
 
-    print("\nDone. Run pixel_art.py to convert images.")
+    if args.replace_cleaned:
+        cleaned_blocks = clean_entries(blocks)
+        cleaned_walls = clean_entries(walls)
+        validate_refresh(cleaned_blocks, cleaned_walls)
+        for name, entries in (("cleaned_blocks.json", cleaned_blocks), ("cleaned_walls.json", cleaned_walls)):
+            path = out_dir / name
+            with path.open("w", encoding="utf-8") as file:
+                json.dump(entries, file, indent=2)
+                file.write("\n")
+            print(f"Replaced {path} with {len(entries)} validated entries")
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":
