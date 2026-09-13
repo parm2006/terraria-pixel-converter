@@ -35,7 +35,7 @@ TEDIT_WALLS_URL = (
 WIKI_FILE_REDIRECT = "https://terraria.wiki.gg/wiki/Special:Redirect/file/{}"
 USER_AGENT = "TerrariaPixelArtTool/2.0 (open-source educational project)"
 DEFAULT_SAMPLE_SIZE = 32
-DEFAULT_REQUEST_DELAY = 0.08
+DEFAULT_REQUEST_DELAY = 0.5
 
 
 def make_session() -> requests.Session:
