@@ -1,0 +1,9 @@
+images/
+local_outputs/
+proper_pixel_art_outputs/
+__pycache__/
+documentation.md
+inspect_wiki.py
+scrape_terraria.py
+site/.openai/
+.sites-runtime/

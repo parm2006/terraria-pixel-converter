@@ -1,0 +1,6 @@
+.vercel/
+.venv/
+_uv/
+__pycache__/
+
+.vercel

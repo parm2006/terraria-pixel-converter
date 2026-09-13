@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Turn pixel art into a Terraria block and wall material plan with automatic grid detection and optional background removal."
+    />
+    <meta name="theme-color" content="#182619" />
+    <title>Terraria Build Mapper</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23182619'/%3E%3Cpath d='M7 6h18v5H7zm4 5h10v5H11zm3 5h4v10h-4z' fill='%23d8ae55'/%3E%3Cpath d='M6 25h20v3H6z' fill='%235f8d45'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <a class="skip-link" href="#converter">Skip to converter</a>
+    <header class="topbar">
+      <div class="brand" aria-label="Terraria Build Mapper">
+        <span class="brand-mark" aria-hidden="true">T</span>
+        <span>
+          <strong>Terraria Build Mapper</strong>
+          <small>Pixel art to material plan</small>
+        </span>
+      </div>
+      <div class="top-actions">
+        <span class="privacy-badge">Processed securely · not stored</span>
+        <button class="button button-quiet" id="contrastToggle" type="button" aria-pressed="false">
+          High contrast
+        </button>
+      </div>
+    </header>
+
+    <main id="converter" class="app-shell">
+      <aside class="panel controls-panel" aria-labelledby="settingsTitle">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">01 / SOURCE</span>
+            <h1 id="settingsTitle">Build settings</h1>
+          </div>
+          <span id="engineStatus" class="status-chip" role="status">Loading engine</span>
+        </div>
+
+        <label class="dropzone" id="dropzone" for="fileInput">
+          <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" />
+          <span class="drop-icon" aria-hidden="true">+</span>
+          <strong>Choose pixel art</strong>
+          <span>PNG, JPG, or WebP · drag and drop works too</span>
+        </label>
+        <p class="file-name" id="fileName">No image selected</p>
+
+        <fieldset class="control-group">
+          <legend>Grid detection</legend>
+          <div class="control-label">
+            <label for="pixelWidth">Source pixel width</label>
+            <output id="pixelWidthValue" for="pixelWidth pixelWidthNumber">Auto</output>
+          </div>
+          <div class="range-row">
+            <input id="pixelWidth" type="range" min="0" max="64" value="0" step="1" />
+            <input id="pixelWidthNumber" type="number" min="0" max="256" value="0" step="1" aria-label="Source pixel width number" />
+          </div>
+          <p class="hint">Use Auto unless the detected grid is wrong.</p>
+        </fieldset>
+
+        <fieldset class="control-group">
+          <legend>Clean-up</legend>
+          <label class="switch-row">
+            <span>
+              <strong>Remove outside background</strong>
+              <small>Keeps enclosed areas untouched</small>
+            </span>
+            <input id="removeBackground" type="checkbox" checked />
+          </label>
+          <div class="control-label">
+            <label for="tolerance">Background tolerance</label>
+            <output id="toleranceValue" for="tolerance toleranceNumber">3</output>
+          </div>
+          <div class="range-row">
+            <input id="tolerance" type="range" min="0" max="64" value="3" step="1" />
+            <input id="toleranceNumber" type="number" min="0" max="255" value="3" step="1" aria-label="Background tolerance number" />
+          </div>
+          <div class="control-label">
+            <label for="binSize">Noise grouping</label>
+            <output id="binSizeValue" for="binSize binSizeNumber">52</output>
+          </div>
+          <div class="range-row">
+            <input id="binSize" type="range" min="4" max="96" value="52" step="1" />
+            <input id="binSizeNumber" type="number" min="1" max="255" value="52" step="1" aria-label="Noise grouping number" />
+          </div>
+        </fieldset>
+
+        <fieldset class="control-group">
+          <legend>Terraria palette</legend>
+          <label for="paletteMode">Allowed materials</label>
+          <select id="paletteMode">
+            <option value="both">Blocks and walls</option>
+            <option value="blocks">Blocks only</option>
+            <option value="walls">Walls only</option>
+          </select>
+        </fieldset>
+
+        <button class="button button-primary" id="convertButton" type="button" disabled>
+          Convert image
+        </button>
+        <p class="error-message" id="errorMessage" role="alert" hidden></p>
+      </aside>
+
+      <section class="panel workspace-panel" aria-labelledby="previewTitle">
+        <div class="panel-heading workspace-heading">
+          <div>
+            <span class="eyebrow">02 / PREVIEW</span>
+            <h2 id="previewTitle">Mapped build</h2>
+          </div>
+          <dl class="stats" aria-label="Conversion details">
+            <div><dt>Grid</dt><dd id="gridStat">—</dd></div>
+            <div><dt>Visible</dt><dd id="visibleStat">—</dd></div>
+            <div><dt>Time</dt><dd id="timeStat">—</dd></div>
+          </dl>
+        </div>
+
+        <div class="canvas-stage" id="canvasStage">
+          <div class="empty-state" id="emptyState">
+            <span class="empty-pixel" aria-hidden="true"></span>
+            <strong>Your build appears here</strong>
+            <p>Select an image, adjust the controls, then convert it.</p>
+          </div>
+          <canvas id="resultCanvas" aria-label="Terraria material-color reconstruction" hidden></canvas>
+        </div>
+
+        <div class="preview-controls">
+          <label for="zoom">Preview zoom</label>
+          <input id="zoom" type="range" min="4" max="32" value="16" step="1" disabled />
+          <output id="zoomValue" for="zoom">16×</output>
+          <label class="checkbox-row"><input id="showGrid" type="checkbox" /> Show grid</label>
+        </div>
+
+        <div class="download-row">
+          <button class="button button-secondary" id="downloadClean" type="button" disabled>Download clean 1× image</button>
+          <button class="button button-secondary" id="downloadMapped" type="button" disabled>Download mapped PNG</button>
+          <button class="button button-secondary" id="downloadCsv" type="button" disabled>Download materials CSV</button>
+        </div>
+      </section>
+
+      <aside class="panel materials-panel" aria-labelledby="materialsTitle">
+        <div class="panel-heading">
+          <div>
+            <span class="eyebrow">03 / MATERIALS</span>
+            <h2 id="materialsTitle">Shopping list</h2>
+          </div>
+          <span class="total-chip" id="materialTotal">0 tiles</span>
+        </div>
+        <label class="search-field">
+          <span class="sr-only">Filter materials</span>
+          <input id="materialSearch" type="search" placeholder="Filter materials" disabled />
+        </label>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Material</th><th scope="col">Type</th><th scope="col" class="number">Count</th></tr>
+            </thead>
+            <tbody id="materialRows">
+              <tr class="placeholder-row"><td colspan="3">Convert an image to calculate materials.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </aside>
+    </main>
+
+    <footer>
+      <p>Fan-made planning tool. Not affiliated with Re-Logic or Terraria.</p>
+      <nav aria-label="Legal and accessibility">
+        <button type="button" data-dialog="privacyDialog">Privacy</button>
+        <button type="button" data-dialog="accessibilityDialog">Accessibility</button>
+        <button type="button" data-dialog="aboutDialog">How it works</button>
+      </nav>
+    </footer>
+
+    <dialog id="privacyDialog">
+      <article>
+        <header><h2>Privacy policy</h2><button class="dialog-close" type="button" aria-label="Close privacy policy">×</button></header>
+        <p><strong>Your artwork is processed only to complete your conversion.</strong> When you select Convert, the image is sent securely to this app’s conversion service, processed in memory, and returned to your browser.</p>
+        <p>This app does not intentionally retain, sell, train on, or share uploaded images. It does not require an account and does not use advertising or tracking cookies. Conversion results remain in your browser unless you download them.</p>
+        <p>Vercel hosts the website and conversion function and may process ordinary connection information such as an IP address, request metadata, and browser details to deliver and protect the service. Do not upload sensitive or confidential images.</p>
+      </article>
+    </dialog>
+
+    <dialog id="accessibilityDialog">
+      <article>
+        <header><h2>Accessibility</h2><button class="dialog-close" type="button" aria-label="Close accessibility information">×</button></header>
+        <p>The converter supports keyboard navigation, visible focus indicators, screen-reader labels, status announcements, reduced-motion preferences, and a high-contrast mode.</p>
+        <p>Material choices are identified by names, types, counts, and hex values—not color alone. Controls pair sliders with editable number fields.</p>
+        <p>If part of the converter is difficult to use, report the image format, browser, and the control that caused trouble in the project’s GitHub issues.</p>
+      </article>
+    </dialog>
+
+    <dialog id="aboutDialog">
+      <article>
+        <header><h2>How it works</h2><button class="dialog-close" type="button" aria-label="Close how it works">×</button></header>
+        <ol>
+          <li>Detect the source artwork’s pixel grid using edges and repeated spacing.</li>
+          <li>Choose one solid representative color for every detected cell.</li>
+          <li>Optionally flood-fill the outside background while preserving enclosed areas.</li>
+          <li>Find the nearest average color among Terraria blocks and walls.</li>
+        </ol>
+      </article>
+    </dialog>
+
+    <div class="sr-only" id="liveStatus" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
