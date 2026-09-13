@@ -10,6 +10,7 @@ const elements = {
   errorMessage: $("#errorMessage"),
   resultCanvas: $("#resultCanvas"),
   emptyState: $("#emptyState"),
+  realStat: $("#realStat"),
   gridStat: $("#gridStat"),
   visibleStat: $("#visibleStat"),
   timeStat: $("#timeStat"),
@@ -279,6 +280,7 @@ async function convertImage() {
     state.cleanedImage = cleanedImage;
     state.mappedImage = mappedImage;
 
+    elements.realStat.textContent = `${payload.source.width} × ${payload.source.height}`;
     elements.gridStat.textContent = `${payload.grid.width} × ${payload.grid.height}`;
     elements.visibleStat.textContent = payload.visible_pixels.toLocaleString();
     elements.timeStat.textContent = `${payload.processing_ms} ms`;

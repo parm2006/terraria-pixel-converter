@@ -237,7 +237,7 @@ input[type="number"], input[type="search"], select {
 .error-message { padding: 10px; border-left: 3px solid var(--danger); color: #ffd6cc; background: #351c19; font-size: .84rem; }
 
 .workspace-heading { align-items: center; }
-.stats { display: flex; margin: 0; gap: 18px; }
+.stats { display: flex; flex-wrap: wrap; margin: 0; gap: 18px; }
 .stats div { text-align: right; }
 .stats dt { color: var(--muted); font-size: .68rem; text-transform: uppercase; }
 .stats dd { margin: 0; color: var(--gold); font-size: .88rem; font-weight: 800; }
