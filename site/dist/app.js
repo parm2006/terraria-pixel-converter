@@ -23,6 +23,7 @@ const elements = {
   materialRows: $("#materialRows"),
   downloadClean: $("#downloadClean"),
   downloadMapped: $("#downloadMapped"),
+  downloadTedit: $("#downloadTedit"),
   downloadCsv: $("#downloadCsv"),
   contrastToggle: $("#contrastToggle"),
   liveStatus: $("#liveStatus"),
@@ -343,6 +344,7 @@ async function convertImage() {
     elements.materialSearch.disabled = false;
     elements.downloadClean.disabled = false;
     elements.downloadMapped.disabled = false;
+    elements.downloadTedit.disabled = false;
     elements.downloadCsv.disabled = false;
     elements.materialSearch.value = "";
     renderPreview();
@@ -388,6 +390,10 @@ elements.downloadMapped.addEventListener("click", () => {
   context.imageSmoothingEnabled = false;
   context.drawImage(state.mappedImage, 0, 0, canvas.width, canvas.height);
   downloadUrl(canvas.toDataURL("image/png"), `${state.file.name.replace(/\.[^.]+$/, "")}_terraria.png`);
+});
+
+elements.downloadTedit.addEventListener("click", () => {
+  downloadUrl(state.result.mapped_png, `${state.file.name.replace(/\.[^.]+$/, "")}_tedit_1tile_per_pixel.png`);
 });
 
 elements.downloadCsv.addEventListener("click", () => {
