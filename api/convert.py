@@ -169,6 +169,9 @@ class handler(BaseHTTPRequestHandler):
         if path == "/app.js":
             self._send_static("app.js", "text/javascript; charset=utf-8")
             return
+        if path == "/loading.gif":
+            self._send_static("loading.gif", "image/gif")
+            return
         if path != "/api/convert":
             self._send_json(404, {"error": "Not found"})
             return

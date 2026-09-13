@@ -4,7 +4,6 @@ const elements = {
   fileInput: $("#fileInput"),
   dropzone: $("#dropzone"),
   fileName: $("#fileName"),
-  filePreview: $("#filePreview"),
   dropIcon: $("#dropIcon"),
   engineStatus: $("#engineStatus"),
   convertButton: $("#convertButton"),
@@ -46,7 +45,6 @@ const state = {
   cleanedImage: null,
   mappedImage: null,
   processing: false,
-  previewUrl: null,
 };
 
 function announce(message) {
@@ -58,6 +56,21 @@ function showError(message) {
   elements.errorMessage.textContent = message;
   elements.errorMessage.hidden = false;
   announce(message);
+}
+
+function readableError(value, fallback) {
+  if (typeof value === "string" && value.trim()) return value;
+  if (Array.isArray(value)) {
+    const messages = value.map((item) => readableError(item, "")).filter(Boolean);
+    if (messages.length) return messages.join(" ");
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["message", "msg", "detail", "error"]) {
+      const message = readableError(value[key], "");
+      if (message) return message;
+    }
+  }
+  return fallback;
 }
 
 function clearError() {
@@ -115,11 +128,6 @@ function acceptFile(file) {
     return;
   }
   state.file = file;
-  if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
-  state.previewUrl = URL.createObjectURL(file);
-  elements.filePreview.src = state.previewUrl;
-  elements.filePreview.hidden = false;
-  elements.dropIcon.hidden = true;
   elements.dropzone.classList.add("has-file");
   elements.fileName.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB`;
   updateConvertState();
@@ -256,7 +264,12 @@ async function convertImage() {
       body: state.file,
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Conversion failed (${response.status}).`);
+    if (!response.ok) {
+      throw new Error(readableError(
+        payload.error ?? payload.detail ?? payload.message,
+        `The image could not be converted (${response.status}). Try Auto pixel width or a smaller custom value.`,
+      ));
+    }
 
     const [cleanedImage, mappedImage] = await Promise.all([
       imageFromUrl(payload.cleaned_png),
