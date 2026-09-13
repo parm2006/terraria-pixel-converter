@@ -117,25 +117,9 @@ def fetch_sprite_color(
         return None, requested_url, str(error)
 
 
-def is_one_by_one(record: dict[str, Any]) -> bool:
-    sizes = record.get("frameSize")
-    if sizes is None:
-        return True
-    if not isinstance(sizes, list):
-        return False
-    return any(
-        isinstance(size, list) and len(size) == 2 and size[0] == 1 and size[1] == 1
-        for size in sizes
-    )
-
-
 def tile_rejection_reason(record: dict[str, Any]) -> str | None:
     if not isinstance(record.get("id"), int) or not str(record.get("name", "")).strip():
         return "missing_id_or_name"
-    if not record.get("isSolid", False):
-        return "not_a_solid_block"
-    if not is_one_by_one(record):
-        return "not_placeable_as_1x1"
     return None
 
 
@@ -144,8 +128,6 @@ def wall_rejection_reason(record: dict[str, Any]) -> str | None:
     name = str(record.get("name", "")).strip()
     if not isinstance(wall_id, int) or not name:
         return "missing_id_or_name"
-    if wall_id == 0 or name.casefold() in {"none", "empty", "air"}:
-        return "empty_wall"
     return None
 
 
@@ -176,10 +158,18 @@ def material_entry(
     entry = {
         "id": material_id,
         "name": name,
+        "material_type": material_type,
         "avg_color": list(color),
         "sprite_url": sprite_url,
         "color_source": "wiki_32x32_sample" if sprite_color else "tedit_fallback",
     }
+    if material_type == "block":
+        entry.update({
+            "is_solid": bool(record.get("isSolid", False)),
+            "is_solid_top": bool(record.get("isSolidTop", False)),
+            "is_framed": bool(record.get("isFramed", False)),
+            "frame_size": record.get("frameSize"),
+        })
     if error is None:
         return entry, None
     return entry, {
