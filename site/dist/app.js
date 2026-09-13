@@ -4,6 +4,8 @@ const elements = {
   fileInput: $("#fileInput"),
   dropzone: $("#dropzone"),
   fileName: $("#fileName"),
+  filePreview: $("#filePreview"),
+  dropIcon: $("#dropIcon"),
   engineStatus: $("#engineStatus"),
   convertButton: $("#convertButton"),
   errorMessage: $("#errorMessage"),
@@ -23,6 +25,7 @@ const elements = {
   downloadCsv: $("#downloadCsv"),
   contrastToggle: $("#contrastToggle"),
   liveStatus: $("#liveStatus"),
+  loadingOverlay: $("#loadingOverlay"),
   pixelWidth: $("#pixelWidth"),
   pixelWidthNumber: $("#pixelWidthNumber"),
   pixelWidthValue: $("#pixelWidthValue"),
@@ -43,6 +46,7 @@ const state = {
   cleanedImage: null,
   mappedImage: null,
   processing: false,
+  previewUrl: null,
 };
 
 function announce(message) {
@@ -111,6 +115,12 @@ function acceptFile(file) {
     return;
   }
   state.file = file;
+  if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+  state.previewUrl = URL.createObjectURL(file);
+  elements.filePreview.src = state.previewUrl;
+  elements.filePreview.hidden = false;
+  elements.dropIcon.hidden = true;
+  elements.dropzone.classList.add("has-file");
   elements.fileName.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB`;
   updateConvertState();
   announce(`${file.name} selected and ready to convert.`);
@@ -224,6 +234,7 @@ async function convertImage() {
   if (!state.file || state.processing) return;
   clearError();
   state.processing = true;
+  elements.loadingOverlay.hidden = false;
   updateConvertState();
   elements.convertButton.textContent = "Converting…";
   elements.engineStatus.textContent = "Working";
@@ -274,6 +285,7 @@ async function convertImage() {
     showError(error.message || "Conversion failed. Please try again.");
   } finally {
     state.processing = false;
+    elements.loadingOverlay.hidden = true;
     document.body.removeAttribute("aria-busy");
     elements.convertButton.textContent = "Convert image";
     elements.engineStatus.textContent = state.apiReady ? "Engine ready" : "Engine unavailable";

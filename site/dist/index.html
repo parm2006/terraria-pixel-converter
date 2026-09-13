@@ -46,7 +46,10 @@
 
         <label class="dropzone" id="dropzone" for="fileInput">
           <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp" />
-          <span class="drop-icon" aria-hidden="true">+</span>
+          <span class="drop-preview" aria-hidden="true">
+            <span class="drop-icon" id="dropIcon">+</span>
+            <img id="filePreview" alt="" hidden />
+          </span>
           <strong>Choose pixel art</strong>
           <span>PNG, JPG, or WebP · drag and drop works too</span>
         </label>
@@ -128,6 +131,24 @@
             <p>Select an image, adjust the controls, then convert it.</p>
           </div>
           <canvas id="resultCanvas" aria-label="Terraria material-color reconstruction" hidden></canvas>
+          <div class="loading-overlay" id="loadingOverlay" role="status" aria-live="polite" hidden>
+            <div class="terraria-loader" aria-hidden="true">
+              <span style="--row: 1; --column: 5"></span>
+              <span style="--row: 2; --column: 5"></span>
+              <span style="--row: 3; --column: 5"></span>
+              <span style="--row: 4; --column: 5"></span>
+              <span style="--row: 5; --column: 5"></span>
+              <span style="--row: 5; --column: 4"></span>
+              <span style="--row: 5; --column: 3"></span>
+              <span style="--row: 5; --column: 2"></span>
+              <span style="--row: 5; --column: 1"></span>
+              <span style="--row: 4; --column: 1"></span>
+              <span style="--row: 3; --column: 1"></span>
+              <span style="--row: 2; --column: 1"></span>
+            </div>
+            <strong>Mapping your build…</strong>
+            <p>Cleaning pixels and matching Terraria materials</p>
+          </div>
         </div>
 
         <div class="preview-controls">

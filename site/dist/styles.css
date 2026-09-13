@@ -161,6 +161,19 @@ button:disabled, input:disabled { cursor: not-allowed; opacity: .52; }
 .dropzone input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .dropzone strong { margin-top: 8px; }
 .dropzone span:last-child { color: var(--muted); font-size: .78rem; }
+.drop-preview {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #725920;
+  background: #101a12;
+  box-shadow: inset 0 0 0 3px rgba(216, 174, 85, .06), 0 5px 14px rgba(0, 0, 0, .28);
+}
+.drop-preview img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.dropzone.has-file { border-color: var(--green); background-color: #203623; }
+.dropzone.has-file .drop-preview { border-color: var(--gold); }
 .drop-icon {
   display: grid;
   width: 34px;
@@ -242,6 +255,40 @@ input[type="number"], input[type="search"], select {
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   background-size: 16px 16px;
 }
+.loading-overlay {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  padding: 32px;
+  text-align: center;
+  background:
+    radial-gradient(circle at center, rgba(38, 69, 39, .94), rgba(8, 16, 10, .96) 58%),
+    repeating-linear-gradient(135deg, transparent 0 12px, rgba(97, 137, 64, .08) 12px 13px);
+  backdrop-filter: blur(2px);
+}
+.loading-overlay[hidden] { display: none; }
+.loading-overlay strong { margin-top: 22px; color: #f2df9a; font-size: 1.05rem; }
+.loading-overlay p { margin: 8px 0 0; color: var(--muted); font-size: .82rem; }
+.terraria-loader {
+  display: grid;
+  grid-template: repeat(5, 13px) / repeat(5, 13px);
+  gap: 3px;
+  width: 77px;
+  height: 77px;
+  filter: drop-shadow(0 0 9px rgba(143, 198, 83, .4));
+  animation: square-spin 1.15s steps(16, end) infinite;
+}
+.terraria-loader span {
+  grid-row: var(--row);
+  grid-column: var(--column);
+  border: 1px solid #c4a04c;
+  background: linear-gradient(135deg, #b9df70 0 46%, #57913d 47% 100%);
+  box-shadow: inset -2px -2px rgba(19, 48, 22, .36);
+}
+@keyframes square-spin { to { transform: rotate(360deg); } }
 .empty-state { max-width: 320px; padding: 32px; text-align: center; }
 .empty-state strong { display: block; margin-bottom: 8px; }
 .empty-state p { margin: 0; color: var(--muted); }
@@ -348,4 +395,5 @@ body.high-contrast {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .terraria-loader { animation: none !important; }
 }
