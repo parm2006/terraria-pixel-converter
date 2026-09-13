@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/convert.py": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "excludeFiles": "{images/**,local_outputs/**,proper_pixel_art_outputs/**,__pycache__/**,site/.openai/**}"
     }
   }

@@ -284,7 +284,7 @@ def refine_logical_grid(
     *,
     num_colors: int | None,
     bin_size: int,
-    diagnostics_dir: Path,
+    diagnostics_dir: Path | None,
     improvement_threshold: float,
 ) -> tuple[Image.Image, int, list[dict]]:
     """Correct a detected grid when a harmonic divisor preserves more detail.
@@ -300,13 +300,21 @@ def refine_logical_grid(
     logical_by_width = {estimated_width: auto_logical}
     errors = {estimated_width: reconstruction_error(source, auto_logical)}
 
-    candidate_root = diagnostics_dir / "harmonic_candidates"
-    candidate_root.mkdir(parents=True, exist_ok=True)
+    candidate_root = (
+        diagnostics_dir / "harmonic_candidates" if diagnostics_dir is not None else None
+    )
+    if candidate_root is not None:
+        candidate_root.mkdir(parents=True, exist_ok=True)
     for width in candidates:
         if width == estimated_width:
             continue
-        candidate_dir = candidate_root / f"source_width_{width}"
-        candidate_dir.mkdir(parents=True, exist_ok=True)
+        candidate_dir = (
+            candidate_root / f"source_width_{width}"
+            if candidate_root is not None
+            else None
+        )
+        if candidate_dir is not None:
+            candidate_dir.mkdir(parents=True, exist_ok=True)
         candidate = proper_pixel_art(
             source,
             num_colors=num_colors,
@@ -374,8 +382,13 @@ def refine_logical_grid(
         and selected_width / edge_candidate >= 2.5
     ):
         if edge_candidate not in logical_by_width:
-            candidate_dir = candidate_root / f"edge_width_{edge_candidate}"
-            candidate_dir.mkdir(parents=True, exist_ok=True)
+            candidate_dir = (
+                candidate_root / f"edge_width_{edge_candidate}"
+                if candidate_root is not None
+                else None
+            )
+            if candidate_dir is not None:
+                candidate_dir.mkdir(parents=True, exist_ok=True)
             candidate = proper_pixel_art(
                 source,
                 num_colors=num_colors,
