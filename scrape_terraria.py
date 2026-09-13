@@ -39,7 +39,7 @@ BLOCK_SUBPAGES = [
 
 WALLS_SUBPAGES = [
     "/wiki/Crafted_walls",
-    "/wiki/Purchased_Walls",
+    "/wiki/Purchased_walls",
     "/wiki/Naturally_occurring_walls",
     "/wiki/Converted_walls",
 ]
@@ -164,7 +164,7 @@ def fetch_and_avg(url: str, session: requests.Session):
         return average_color(tile)
     except Exception as e:
         print(f"    [WARN] fetch failed for {url}: {e}")
-        return None
+        return None, str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -187,17 +187,23 @@ def extract_items(
         if not img_tag:
             continue
 
-        src = img_tag.get("src") or img_tag.get("data-src") or ""
-        if not src:
-            continue
-        sprite_url = make_absolute(src.split("?")[0])
-
         name = img_tag.get("alt", "").strip()
         if not name:
             a = span.find("a")
             name = a.get_text(strip=True) if a else ""
         if not name:
             continue
+
+        src = img_tag.get("src") or img_tag.get("data-src") or ""
+        if not src:
+            rejected.append({
+                "name": name,
+                "sprite_url": "",
+                "reason": "missing_sprite_url",
+                "source_page": source_page,
+            })
+            continue
+        sprite_url = make_absolute(src.split("?")[0])
 
         if name in seen:
             continue
@@ -223,9 +229,20 @@ def extract_items(
         seen.add(name)
 
         time.sleep(REQUEST_DELAY)
-        avg = fetch_and_avg(sprite_url, session)
+        result = fetch_and_avg(sprite_url, session)
+        if isinstance(result, tuple):
+            avg, error = result
+        else:
+            avg, error = result, None
         if avg is None:
             print(f"  [WARN] {name}: transparent or download failed, skipping.")
+            rejected.append({
+                "name": name,
+                "sprite_url": sprite_url,
+                "reason": "sprite_fetch_or_transparency_failed",
+                "source_page": source_page,
+                "error": error or "no visible pixels in sampled area",
+            })
             continue
 
         entries.append({
