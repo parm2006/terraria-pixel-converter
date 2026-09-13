@@ -57,14 +57,14 @@
         <fieldset class="control-group">
           <legend>Grid detection</legend>
           <div class="control-label">
-            <label for="pixelWidth">Source pixel width</label>
+            <label for="pixelWidth">Pixel size</label>
             <output id="pixelWidthValue" for="pixelWidth pixelWidthNumber">Auto</output>
           </div>
           <div class="range-row">
             <input id="pixelWidth" type="range" min="0" max="64" value="0" step="1" />
-            <input id="pixelWidthNumber" type="number" min="0" max="256" value="0" step="1" aria-label="Source pixel width number" />
+            <input id="pixelWidthNumber" type="number" min="0" max="256" value="0" step="1" aria-label="Pixel size in source-image pixels" />
           </div>
-          <p class="hint">Use Auto unless the detected grid is wrong.</p>
+          <p class="hint">0 = Auto. Otherwise enter source-image pixels per logical pixel.</p>
         </fieldset>
 
         <fieldset class="control-group">

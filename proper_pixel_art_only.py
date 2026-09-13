@@ -58,11 +58,14 @@ def main() -> None:
         source = ImageOps.exif_transpose(opened).convert("RGBA")
         source.load()
 
+    # Proper Pixel Art builds its mesh on a 2x working image. Keep this CLI's
+    # --pixel-width expressed in real source-image pixels.
+    working_pixel_width = args.pixel_width * 2 if args.pixel_width > 0 else 0
     logical = pixelate(
         source,
         config=PixelateConfig(
             num_colors=args.colors,
-            pixel_width=args.pixel_width,
+            pixel_width=working_pixel_width,
             scale_result=1,
             transparent_background=False,
             colors=ColorConfig(bin_size=args.bin_size),

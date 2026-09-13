@@ -77,9 +77,13 @@ def clean_image(
     if not 1 <= bin_size <= 255:
         raise ValueError("noise grouping bin size must be between 1 and 255")
 
+    # Proper Pixel Art detects its mesh on a 2x working image. Its manual
+    # pixel_width is interpreted in that enlarged coordinate space, while our
+    # CLI and website expose the more intuitive width in source-image pixels.
+    working_pixel_width = pixel_width * 2 if pixel_width > 0 else 0
     config = PixelateConfig(
         num_colors=0 if num_colors is None else num_colors,
-        pixel_width=pixel_width,
+        pixel_width=working_pixel_width,
         scale_result=1,
         transparent_background=False,
         colors=ColorConfig(bin_size=bin_size),
