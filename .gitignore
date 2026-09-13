@@ -2,5 +2,6 @@
 .venv/
 _uv/
 __pycache__/
+proper_pixel_art_outputs/
 
 .vercel
