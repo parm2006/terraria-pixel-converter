@@ -291,6 +291,25 @@ input[type="number"], input[type="search"], select {
 .empty-pixel { display: block; width: 58px; height: 58px; margin: 0 auto 20px; border: 8px solid #304731; background: #18241a; box-shadow: 10px 10px 0 #0b100c; }
 #resultCanvas { image-rendering: pixelated; image-rendering: crisp-edges; max-width: none; box-shadow: 0 0 0 1px rgb(255 255 255 / 18%), 0 16px 50px #000; }
 #resultCanvas.show-grid { background-image: linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px); }
+.cell-tooltip {
+  position: absolute;
+  z-index: 4;
+  min-width: 150px;
+  max-width: 230px;
+  padding: 9px 11px;
+  border: 1px solid #b78b32;
+  border-radius: 3px;
+  color: #f7edc4;
+  background: linear-gradient(145deg, #1b2d1e, #0b150d);
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, .5), 0 0 14px rgba(184, 139, 50, .22);
+  pointer-events: none;
+  font-size: .78rem;
+  line-height: 1.25;
+}
+.cell-tooltip[hidden] { display: none; }
+.cell-tooltip strong, .cell-tooltip span { display: block; }
+.cell-tooltip strong { color: #f2c85b; font-size: .86rem; }
+.cell-tooltip span { margin-top: 3px; color: #b9c7ae; }
 .preview-controls { flex-wrap: wrap; gap: 12px; padding: 14px 0; color: var(--muted); font-size: .82rem; }
 .preview-controls input[type="range"] { width: min(230px, 35vw); }
 .checkbox-row { gap: 7px; margin-left: auto; }

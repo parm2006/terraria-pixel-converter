@@ -164,6 +164,7 @@ def convert_request(body: bytes, query: str) -> dict:
         "grid_refinement": grid_refinement,
         "background": background,
         "materials": material_summary,
+        "color_matches": color_matches,
         "cleaned_png": _png_data_url(cleaned),
         "mapped_png": _png_data_url(mapped),
     }

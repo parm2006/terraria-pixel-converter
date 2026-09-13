@@ -9,6 +9,7 @@ const elements = {
   convertButton: $("#convertButton"),
   errorMessage: $("#errorMessage"),
   resultCanvas: $("#resultCanvas"),
+  cellTooltip: $("#cellTooltip"),
   emptyState: $("#emptyState"),
   realStat: $("#realStat"),
   gridStat: $("#gridStat"),
@@ -45,6 +46,8 @@ const state = {
   result: null,
   cleanedImage: null,
   mappedImage: null,
+  cleanedPixelContext: null,
+  colorLookup: new Map(),
   processing: false,
 };
 
@@ -188,6 +191,48 @@ function renderPreview() {
   elements.zoomValue.textContent = `${zoom}×`;
 }
 
+function hideCellTooltip() {
+  elements.cellTooltip.hidden = true;
+}
+
+function showCellTooltip(event) {
+  if (!state.result || !state.cleanedPixelContext || elements.resultCanvas.hidden) {
+    hideCellTooltip();
+    return;
+  }
+  const canvas = elements.resultCanvas;
+  const stage = document.getElementById("canvasStage");
+  const rect = canvas.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX >= rect.right || event.clientY < rect.top || event.clientY >= rect.bottom) {
+    hideCellTooltip();
+    return;
+  }
+  const { width, height } = state.result.grid;
+  const x = Math.min(width - 1, Math.max(0, Math.floor((event.clientX - rect.left) * width / rect.width)));
+  const y = Math.min(height - 1, Math.max(0, Math.floor((event.clientY - rect.top) * height / rect.height)));
+  const pixel = state.cleanedPixelContext.getImageData(x, y, 1, 1).data;
+  const match = state.colorLookup.get(`${pixel[0]},${pixel[1]},${pixel[2]}`);
+  elements.cellTooltip.replaceChildren();
+  const title = document.createElement("strong");
+  title.textContent = match ? match.material_name : (pixel[3] ? "Unmapped color" : "Background");
+  elements.cellTooltip.append(title);
+  if (match) {
+    const detail = document.createElement("span");
+    detail.textContent = `${match.material_type} · ${match.source_hex}`;
+    elements.cellTooltip.append(detail);
+  } else {
+    const detail = document.createElement("span");
+    detail.textContent = pixel[3] ? "No Terraria match" : "Removed or transparent";
+    elements.cellTooltip.append(detail);
+  }
+  const stageRect = stage.getBoundingClientRect();
+  const left = event.clientX - stageRect.left + stage.scrollLeft + 16;
+  const top = event.clientY - stageRect.top + stage.scrollTop + 16;
+  elements.cellTooltip.style.left = `${Math.min(Math.max(8, left), Math.max(8, stage.scrollWidth - 190))}px`;
+  elements.cellTooltip.style.top = `${Math.min(Math.max(8, top), Math.max(8, stage.scrollHeight - 64))}px`;
+  elements.cellTooltip.hidden = false;
+}
+
 function renderMaterials(filter = "") {
   const materials = state.result?.materials || [];
   const needle = filter.trim().toLocaleLowerCase();
@@ -279,6 +324,13 @@ async function convertImage() {
     state.result = payload;
     state.cleanedImage = cleanedImage;
     state.mappedImage = mappedImage;
+    state.colorLookup = new Map((payload.color_matches || []).map((match) => [match.source_color.join(","), match]));
+    const pixelCanvas = document.createElement("canvas");
+    pixelCanvas.width = payload.grid.width;
+    pixelCanvas.height = payload.grid.height;
+    state.cleanedPixelContext = pixelCanvas.getContext("2d", { willReadFrequently: true });
+    state.cleanedPixelContext.imageSmoothingEnabled = false;
+    state.cleanedPixelContext.drawImage(cleanedImage, 0, 0, pixelCanvas.width, pixelCanvas.height);
 
     elements.realStat.textContent = `${payload.source.width} × ${payload.source.height}`;
     elements.gridStat.textContent = `${payload.grid.width} × ${payload.grid.height}`;
@@ -311,6 +363,8 @@ async function convertImage() {
 elements.convertButton.addEventListener("click", convertImage);
 elements.zoom.addEventListener("input", renderPreview);
 elements.showGrid.addEventListener("change", renderPreview);
+elements.resultCanvas.addEventListener("pointermove", showCellTooltip);
+elements.resultCanvas.addEventListener("pointerleave", hideCellTooltip);
 elements.materialSearch.addEventListener("input", () => renderMaterials(elements.materialSearch.value));
 
 function downloadUrl(url, filename) {
