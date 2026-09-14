@@ -3,5 +3,8 @@
 _uv/
 __pycache__/
 proper_pixel_art_outputs/
+data_dirty/
+images/
+local_outputs/
 
 .vercel

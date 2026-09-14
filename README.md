@@ -1,8 +1,10 @@
 # Terraria Pixel Art Converter
 
+> Current note, May 2, 2026: this folder is still named `claudepixels`, but the intended project name is `Terraria Pixel Art Converter`. Next steps are to rename the folder, verify the CLI still works, and build a deployable frontend for public use.
+
 Convert a pixel art image into a Terraria block/wall material list. The tool matches each pixel's color to the closest Terraria block or wall and outputs how many of each you need to build it.
 
-The Terraria wiki has already been scraped and the block/wall color database is included (`data/blocks.json`, `data/walls.json`) — no setup required.
+The Terraria wiki has already been scraped and the deployment palette database is included (`data/cleaned_blocks.json`, `data/cleaned_walls.json`) — no setup required.
 
 ---
 
