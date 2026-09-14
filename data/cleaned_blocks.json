@@ -3450,25 +3450,6 @@
     }
   },
   {
-    "name": "Pufferfish",
-    "material_type": "block",
-    "avg_color": [
-      216,
-      130,
-      79
-    ],
-    "sprite_url": "https://terraria.wiki.gg/images/Pufferfish.png?ad2d01",
-    "color_source": "wiki_32x32_sample",
-    "source": {
-      "attachment": "C:\\Users\\parth\\.codex\\attachments\\aa001420-90e2-4b4d-8efb-1d050e807634\\pasted-text.txt",
-      "raw_columns": [
-        "White",
-        "silver",
-        "10"
-      ]
-    }
-  },
-  {
     "name": "Pumpkin",
     "material_type": "block",
     "avg_color": [
