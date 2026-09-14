@@ -50,6 +50,7 @@ const state = {
   cleanedPixelContext: null,
   colorLookup: new Map(),
   processing: false,
+  pixelWidthMode: "auto",
 };
 
 function announce(message) {
@@ -101,7 +102,26 @@ function bindRange(range, number, output, format = (value) => value) {
   sync(range, number);
 }
 
-bindRange(elements.pixelWidth, elements.pixelWidthNumber, elements.pixelWidthValue, (value) => value === 0 ? "Auto" : `${value}px`);
+function setPixelWidth(value, mode = state.pixelWidthMode) {
+  const minimum = Number(elements.pixelWidth.min || 0);
+  const numericValue = Math.max(minimum, Math.round(Number(value) || 0));
+  const rangeMaximum = Math.max(Number(elements.pixelWidth.max || 64), numericValue);
+  state.pixelWidthMode = numericValue === 0 ? "auto" : mode;
+  elements.pixelWidth.max = String(rangeMaximum);
+  elements.pixelWidth.value = String(numericValue);
+  elements.pixelWidthNumber.value = String(numericValue);
+  elements.pixelWidthValue.textContent = state.pixelWidthMode === "auto"
+    ? (numericValue ? `Auto · ${numericValue}px` : "Auto")
+    : `${numericValue}px`;
+}
+
+elements.pixelWidth.addEventListener("input", () => {
+  setPixelWidth(elements.pixelWidth.value, "manual");
+});
+elements.pixelWidthNumber.addEventListener("input", () => {
+  setPixelWidth(elements.pixelWidthNumber.value, "manual");
+});
+setPixelWidth(0, "auto");
 bindRange(elements.tolerance, elements.toleranceNumber, elements.toleranceValue);
 bindRange(elements.binSize, elements.binSizeNumber, elements.binSizeValue);
 
@@ -299,7 +319,7 @@ async function convertImage() {
   const params = new URLSearchParams({
     remove_background: elements.removeBackground.checked ? "1" : "0",
     tolerance: elements.toleranceNumber.value,
-    pixel_width: elements.pixelWidthNumber.value,
+    pixel_width: state.pixelWidthMode === "auto" ? "0" : elements.pixelWidthNumber.value,
     bin_size: elements.binSizeNumber.value,
     palette: elements.paletteMode.value,
   });
@@ -332,6 +352,10 @@ async function convertImage() {
     state.cleanedPixelContext = pixelCanvas.getContext("2d", { willReadFrequently: true });
     state.cleanedPixelContext.imageSmoothingEnabled = false;
     state.cleanedPixelContext.drawImage(cleanedImage, 0, 0, pixelCanvas.width, pixelCanvas.height);
+
+    if (state.pixelWidthMode === "auto") {
+      setPixelWidth(payload.settings?.selected_pixel_width, "auto");
+    }
 
     elements.realStat.textContent = `${payload.source.width} × ${payload.source.height}`;
     elements.gridStat.textContent = `${payload.grid.width} × ${payload.grid.height}`;
