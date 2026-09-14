@@ -12,17 +12,12 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from local_mode_cleaner import (
-    clean_image as smooth_local_colors,
-    count_visible_colors as count_source_colors,
-    refine_logical_grid,
-)
+from grid_cleanup import recover_grid
 from pixel_art import (
     count_visible_colors,
     draw_material_reconstruction,
     load_database,
     match_materials,
-    clean_image as proper_pixel_art,
     remove_edge_background,
 )
 
@@ -90,35 +85,8 @@ def convert_request(body: bytes, query: str) -> dict:
     if source.width * source.height > MAX_IMAGE_PIXELS:
         raise ValueError("Image is too large; maximum decoded size is 16 megapixels")
 
-    source_color_count = count_source_colors(source)
-    smoothed, smoothing_changes = smooth_local_colors(
-        source,
-        window_size=6,
-        stride=3,
-        tolerance=8,
-        passes=1,
-    )
-    smoothed_color_count = count_source_colors(smoothed)
-
-    automatic_logical = proper_pixel_art(
-        smoothed,
-        num_colors=0,
-        pixel_width=pixel_width,
-        bin_size=bin_size,
-    )
-    automatic_pixel_width = max(1, round(source.width / automatic_logical.width))
-    selected_pixel_width = pixel_width or automatic_pixel_width
-    grid_refinement: list[dict] = []
-    cleaned = automatic_logical
-    if pixel_width == 0:
-        cleaned, selected_pixel_width, grid_refinement = refine_logical_grid(
-            smoothed,
-            automatic_logical,
-            num_colors=0,
-            bin_size=bin_size,
-            diagnostics_dir=None,
-            improvement_threshold=0.30,
-        )
+    cleaned, detection = recover_grid(source, pixel_width=pixel_width, bin_size=bin_size)
+    selected_pixel_width = pixel_width or max(1, round(detection['step_x']))
 
     background = None
     if remove_background:
@@ -145,23 +113,16 @@ def convert_request(body: bytes, query: str) -> dict:
         "unique_colors": len(color_counts),
         "settings": {
             "pixel_width": pixel_width,
-            "automatic_pixel_width": automatic_pixel_width,
+            "automatic_pixel_width": selected_pixel_width if pixel_width == 0 else None,
             "selected_pixel_width": selected_pixel_width,
             "bin_size": bin_size,
             "palette": palette,
             "remove_background": remove_background,
         },
         "processing_ms": round((time.perf_counter() - started) * 1000),
-        "smoothing": {
-            "source_unique_colors": source_color_count,
-            "smoothed_unique_colors": smoothed_color_count,
-            "changed_pixels": smoothing_changes,
-            "window_size": 6,
-            "stride": 3,
-            "tolerance": 8,
-            "passes": 1,
-        },
-        "grid_refinement": grid_refinement,
+        "smoothing": {"method": "cell_dominant_color", "detection_filter": "bilateral"},
+        "grid_refinement": [],
+        "detection": detection,
         "background": background,
         "materials": material_summary,
         "color_matches": color_matches,

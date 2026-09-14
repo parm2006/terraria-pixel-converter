@@ -239,7 +239,8 @@ function showCellTooltip(event) {
   elements.cellTooltip.append(title);
   if (match) {
     const detail = document.createElement("span");
-    detail.textContent = `${match.material_type} · ${match.source_hex}`;
+    const materialHex = `#${match.material_color.map((channel) => channel.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+    detail.textContent = `${match.material_type} · ${materialHex}`;
     elements.cellTooltip.append(detail);
   } else {
     const detail = document.createElement("span");
@@ -355,6 +356,9 @@ async function convertImage() {
 
     if (state.pixelWidthMode === "auto") {
       setPixelWidth(payload.settings?.selected_pixel_width, "auto");
+      if (payload.detection?.confidence === "low") {
+        elements.pixelWidthValue.textContent += " (uncertain)";
+      }
     }
 
     elements.realStat.textContent = `${payload.source.width} × ${payload.source.height}`;

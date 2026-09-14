@@ -6,6 +6,7 @@ dependencies = [
   "Pillow==12.3.0",
   "proper-pixel-art==1.7.2",
   "requests>=2.32,<3",
+  "scipy>=1.11,<2",
 ]
 
 [tool.vercel]
