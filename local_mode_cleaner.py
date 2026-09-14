@@ -287,12 +287,12 @@ def refine_logical_grid(
     diagnostics_dir: Path | None,
     improvement_threshold: float,
 ) -> tuple[Image.Image, int, list[dict]]:
-    """Correct a detected grid when a harmonic divisor preserves more detail.
+    """Correct a detected grid when image evidence contradicts its first guess.
 
-    Proper Pixel Art sometimes detects twice the fundamental pixel width. We
-    only consider exact integer divisors of its estimate. A finer grid is
-    accepted only when its reconstruction error improves by a substantial
-    relative amount, preventing arbitrary periods and the trivial 1px answer.
+    Proper Pixel Art can mistake anti-aliased detail for a tiny 1--2px grid,
+    or detect a multiple of the fundamental width. Harmonic candidates cover
+    the latter; repeated source-image edges provide an independent recovery
+    path for the former.
     """
 
     estimated_width = max(1, round(source.width / auto_logical.width))
@@ -360,7 +360,13 @@ def refine_logical_grid(
 
     edge_rankings = edge_period_candidates(
         source,
-        maximum_period=min(estimated_width, max(4, min(source.size) // 4)),
+        # Never let a 1--2px automatic estimate prevent us from looking for
+        # normal pixel-art cell sizes. The 64px floor keeps this bounded for
+        # ordinary uploads while still allowing larger first estimates.
+        maximum_period=min(
+            max(estimated_width, 64),
+            max(4, min(source.size) // 4),
+        ),
     )
     edge_candidate = None
     if edge_rankings and edge_rankings[0]["edge_score"] > 0:
@@ -373,13 +379,13 @@ def refine_logical_grid(
         if credible_periods:
             edge_candidate = max(credible_periods)
 
-    # If the selected harmonic remains dramatically coarser than a strong
-    # image-derived period, Proper Pixel Art's first estimate was not merely a
-    # small multiple (the pyramid is 159px vs. an observed ~15px cadence).
+    # A much smaller edge candidate corrects an over-coarse first estimate.
+    # A much larger, strong edge candidate corrects the opposite failure:
+    # treating a scaled pixel-art image as an almost source-resolution grid.
     if (
         edge_candidate is not None
-        and edge_candidate < selected_width
-        and selected_width / edge_candidate >= 2.5
+        and edge_candidate != selected_width
+        and max(edge_candidate, selected_width) / min(edge_candidate, selected_width) >= 2.5
     ):
         if edge_candidate not in logical_by_width:
             candidate_dir = (
@@ -405,7 +411,14 @@ def refine_logical_grid(
             if current_error > 0
             else 0.0
         )
-        accepted = relative_improvement >= improvement_threshold
+        edge_score = edge_rankings[0]["edge_score"]
+        if edge_candidate > selected_width:
+            # Fine grids naturally minimize reconstruction error, so that
+            # metric cannot reject a false 1--2px answer. Require a strong
+            # two-axis periodic signal before trusting a coarser candidate.
+            accepted = edge_score >= 0.35
+        else:
+            accepted = relative_improvement >= improvement_threshold
         decisions.append(
             {
                 "from_width": selected_width,
@@ -414,6 +427,7 @@ def refine_logical_grid(
                 "from_error": round(current_error, 6),
                 "candidate_error": round(errors[edge_candidate], 6),
                 "relative_improvement": round(relative_improvement, 6),
+                "edge_score": round(edge_score, 6),
                 "accepted": accepted,
             }
         )
