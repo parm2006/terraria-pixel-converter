@@ -21,7 +21,7 @@ Open [localhost:8000](http://localhost:8000). This serves the static UI and Pyth
 
 ## Using the web app
 
-1. Upload PNG, JPG, or WebP (maximum 4,000,000 bytes; 16 megapixels decoded).
+1. Upload a single-frame PNG, JPG, or WebP (maximum 4,000,000 bytes; 16 megapixels decoded).
 2. Leave pixel size on **Auto**, or enter source-image pixels per output tile.
 3. Choose blocks, walls, or both and adjust background removal if needed.
 4. Convert, inspect the preview and materials list, and download the results.
@@ -63,3 +63,17 @@ The regression suite covers known grids with noise, blur, JPEG compression, inte
 The Vercel configuration points to `api/convert.py`; static assets are in `site/dist/`. Keep the two cleaned datasets and `vendor/` available to the function. Test images and local outputs are excluded from deployment.
 
 Pixel Art Fixer's pinned source, MIT license, and local modifications are documented in [vendor/README.md](vendor/README.md).
+
+## Upload security
+
+Uploads are never written to disk: request bytes are decoded in memory and the
+only returned images are newly generated PNG data URLs. This means there is no
+upload filename, upload directory, or user-uploaded file URL that could be
+executed as a script.
+
+The API accepts only `image/png`, `image/jpeg`, and `image/webp` requests and
+then independently verifies the actual file structure with Pillow. Files are
+accepted only when their detected format is PNG, JPEG, or WebP, are complete,
+are single-frame, and stay within the byte and decoded-pixel limits. The static
+site is served from an explicit fixed-file allowlist with `nosniff` and a
+Content Security Policy; uploaded content is never served back directly.

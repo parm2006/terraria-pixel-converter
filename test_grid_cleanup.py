@@ -71,6 +71,19 @@ class GridCleanupTests(unittest.TestCase):
         self.assertEqual(result['visible_pixels'], 0)
         self.assertEqual(result['materials'], [])
 
+    def test_upload_validation_uses_actual_file_content(self):
+        from api.convert import convert_request
+
+        # A valid image in an unapproved format is rejected even though Pillow
+        # can decode it; the server does not trust a client filename or MIME.
+        gif = BytesIO()
+        Image.new('RGB', (2, 2), 'red').save(gif, format='GIF')
+        with self.assertRaisesRegex(ValueError, 'Only PNG, JPG, and WebP'):
+            convert_request(gif.getvalue(), 'pixel_width=1')
+
+        with self.assertRaisesRegex(ValueError, 'not a valid PNG, JPG, or WebP'):
+            convert_request(b'<svg xmlns="http://www.w3.org/2000/svg"></svg>', '')
+
 
 if __name__ == '__main__':
     unittest.main()

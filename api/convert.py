@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+import warnings
 from io import BytesIO
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -24,6 +25,12 @@ from pixel_art import (
 
 MAX_UPLOAD_BYTES = 4_000_000
 MAX_IMAGE_PIXELS = 16_000_000
+ALLOWED_IMAGE_FORMATS = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "WEBP": "image/webp",
+}
+ALLOWED_CONTENT_TYPES = frozenset(ALLOWED_IMAGE_FORMATS.values())
 DB_DIR = Path(__file__).resolve().parents[1] / "data"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "site" / "dist"
 BLOCKS = load_database(DB_DIR, "blocks")
@@ -59,6 +66,50 @@ def _png_data_url(image: Image.Image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def _decode_upload(body: bytes) -> Image.Image:
+    """Decode only a complete, non-animated image in the supported formats.
+
+    The detected Pillow format is authoritative.  A filename or HTTP
+    Content-Type is user-controlled metadata and is never used to decide how
+    the bytes are handled.
+    """
+    try:
+        # verify() validates the full file structure without retaining decoded
+        # pixels; reopening prevents a partially verified decoder from being
+        # used for conversion.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(body)) as opened:
+                detected_format = opened.format
+                if detected_format not in ALLOWED_IMAGE_FORMATS:
+                    raise ValueError("Only PNG, JPG, and WebP images are allowed")
+                if getattr(opened, "n_frames", 1) != 1:
+                    raise ValueError("Animated images are not supported")
+                opened.verify()
+
+            with Image.open(BytesIO(body)) as opened:
+                # Recheck after reopening so both validation and decoding use
+                # a strictly allowlisted image codec.
+                if opened.format != detected_format:
+                    raise ValueError("The uploaded image could not be validated")
+                source = ImageOps.exif_transpose(opened).convert("RGBA")
+                source.load()
+    except ValueError:
+        raise
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+    ) as error:
+        raise ValueError("The uploaded file is not a valid PNG, JPG, or WebP image") from error
+
+    if source.width * source.height > MAX_IMAGE_PIXELS:
+        raise ValueError("Image is too large; maximum decoded size is 16 megapixels")
+    return source
+
+
 def convert_request(body: bytes, query: str) -> dict:
     if not body:
         raise ValueError("Request body must contain an image")
@@ -75,15 +126,7 @@ def convert_request(body: bytes, query: str) -> dict:
         raise ValueError("palette must be blocks, walls, or both")
 
     started = time.perf_counter()
-    try:
-        with Image.open(BytesIO(body)) as opened:
-            source = ImageOps.exif_transpose(opened).convert("RGBA")
-            source.load()
-    except (UnidentifiedImageError, OSError) as error:
-        raise ValueError("The uploaded file is not a supported image") from error
-
-    if source.width * source.height > MAX_IMAGE_PIXELS:
-        raise ValueError("Image is too large; maximum decoded size is 16 megapixels")
+    source = _decode_upload(body)
 
     cleaned, detection = recover_grid(source, pixel_width=pixel_width, bin_size=bin_size)
     selected_pixel_width = pixel_width or max(1, round(detection['step_x']))
@@ -138,9 +181,8 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.end_headers()
         self.wfile.write(encoded)
 
@@ -154,6 +196,14 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "public, max-age=300")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'none'; object-src 'none'; "
+            "frame-ancestors 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'",
+        )
         self.end_headers()
         self.wfile.write(content)
 
@@ -188,11 +238,32 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
-            content_length = int(self.headers.get("Content-Length", "0"))
+            if urlparse(self.path).path != "/api/convert":
+                self._send_json(404, {"error": "Not found"})
+                return
+            content_length_header = self.headers.get("Content-Length")
+            if content_length_header is None:
+                self._send_json(411, {"error": "Content-Length is required"})
+                return
+            try:
+                content_length = int(content_length_header)
+            except ValueError:
+                self._send_json(400, {"error": "Content-Length must be a whole number"})
+                return
+            if content_length <= 0:
+                self._send_json(400, {"error": "Request body must contain an image"})
+                return
             if content_length > MAX_UPLOAD_BYTES:
                 self._send_json(413, {"error": "Image must be smaller than 4 MB"})
                 return
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type not in ALLOWED_CONTENT_TYPES:
+                self._send_json(415, {"error": "Content-Type must be image/png, image/jpeg, or image/webp"})
+                return
             body = self.rfile.read(content_length)
+            if len(body) != content_length:
+                self._send_json(400, {"error": "Upload body was incomplete"})
+                return
             result = convert_request(body, urlparse(self.path).query)
             self._send_json(200, result)
         except ValueError as error:
